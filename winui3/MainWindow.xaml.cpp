@@ -8,6 +8,8 @@
 #include "ssc_encoder.h"
 
 #include <thread>
+#include <cwchar>
+#include <winrt/Windows.UI.ViewManagement.h>
 
 using namespace winrt;
 using namespace Microsoft::UI::Xaml;
@@ -33,15 +35,67 @@ namespace
         return hstring(result);
     }
 
-    /* Severity brush lookup from the app ResourceDictionary (App.xaml tokens).
-     * Returns null for missing keys so callers can fall back to the default text color. */
-    Microsoft::UI::Xaml::Media::SolidColorBrush TagBrush(const wchar_t* key)
+    /* Effective theme of the main surface. A plain ResourceDictionary lookup cannot
+     * see ThemeDictionaries under C++/WinRT, so the palette is stored as explicit
+     * Light/Dark pairs and the right one is picked here. */
+    bool g_dark_theme = false;
+
+    /* PLAN_UX_DESIGN Faz 3: user opt-out from optional motion. The app has no
+     * decorative animation today; this guards whatever is added next. */
+    bool g_reduce_motion = false;
+
+    /* Live severity brushes. Their colours are copied from the App.xaml palette,
+     * which stays the single source of truth. Because callers keep a reference to
+     * these objects instead of the App.xaml ones, a theme change recolours every
+     * element in place - including log lines written minutes ago - with no walk of
+     * the visual tree. */
+    struct SeverityToken {
+        const wchar_t* key;
+        Microsoft::UI::Xaml::Media::SolidColorBrush brush;
+    };
+    SeverityToken g_severity[] = {
+        { L"TagOkBrush",    nullptr },
+        { L"TagWarnBrush",  nullptr },
+        { L"TagErrorBrush", nullptr },
+        { L"TagDataBrush",  nullptr },
+    };
+
+    void RefreshSeverityBrushes()
     {
         try {
             auto resources = Application::Current().Resources();
-            auto value = resources.TryLookup(winrt::box_value(key));
-            if (value) return value.as<Microsoft::UI::Xaml::Media::SolidColorBrush>();
+            for (auto& token : g_severity) {
+                hstring themed = hstring(token.key) + (g_dark_theme ? L"Dark" : L"Light");
+                auto value = resources.TryLookup(winrt::box_value(themed));
+                if (!value) continue;
+                auto src = value.as<Microsoft::UI::Xaml::Media::SolidColorBrush>();
+                if (!token.brush) token.brush = Microsoft::UI::Xaml::Media::SolidColorBrush();
+                token.brush.Color(src.Color());
+            }
         } catch (...) {}
+    }
+
+    /* True while the user has a high-contrast theme active. Severity colours are
+     * dropped then, so the system palette wins and text stays readable. */
+    bool InHighContrast()
+    {
+        try {
+            Windows::UI::ViewManagement::AccessibilitySettings settings;
+            return settings.HighContrast();
+        } catch (...) {
+            return false;
+        }
+    }
+
+    /* Severity brush lookup for the current theme (App.xaml tokens).
+     * Returns null for unknown keys and under high contrast, so callers fall back to
+     * the default text colour. */
+    Microsoft::UI::Xaml::Media::SolidColorBrush TagBrush(const wchar_t* key)
+    {
+        if (InHighContrast()) return nullptr;
+        for (auto& token : g_severity) {
+            if (wcscmp(token.key, key) == 0) return token.brush;
+        }
         return nullptr;
     }
 
@@ -227,10 +281,22 @@ namespace winrt::A2DPWBWinUI::implementation
 
         VersionCreditText().Text(L"v" + AToW(std::string(APP_VERSION)) + L" \u00B7 by Salvetum");
 
-        // Enable Mica backdrop (Windows 11 translucent material)
+        // Mica is decided after the settings load (ApplyBackdrop), because the
+        // user can opt out and high contrast must win over the request.
+
+        // Severity palette follows the effective theme (PLAN_UX_DESIGN Faz 3).
         try {
-            auto mica = Microsoft::UI::Xaml::Media::MicaBackdrop();
-            this->SystemBackdrop(mica);
+            auto root = this->Content().try_as<Microsoft::UI::Xaml::FrameworkElement>();
+            if (root) {
+                g_dark_theme =
+                    (root.ActualTheme() == Microsoft::UI::Xaml::ElementTheme::Dark);
+                root.ActualThemeChanged([](auto const& sender, auto const&) {
+                        g_dark_theme = (sender.ActualTheme() ==
+                                        Microsoft::UI::Xaml::ElementTheme::Dark);
+                        RefreshSeverityBrushes();
+                    });
+            }
+            RefreshSeverityBrushes();
         } catch (...) {}
 
         dispatcher_ = Microsoft::UI::Dispatching::DispatcherQueue::GetForCurrentThread();
@@ -328,6 +394,14 @@ namespace winrt::A2DPWBWinUI::implementation
         AutoConnectCheck().IsChecked(settings_.auto_connect_on_start);
         ReconnectLastButton().IsEnabled(!settings_.last_device_mac.empty());
         UpdateStatusDevice(settings_.last_device_name, settings_.last_device_mac);
+
+        /* Appearance (PLAN_UX_DESIGN Faz 3). Set the control values without
+         * letting the change handler save them straight back, then decide the
+         * backdrop once the user preference is known. */
+        MicaCheck().IsChecked(settings_.mica_enabled);
+        ReduceMotionCheck().IsChecked(settings_.reduce_motion);
+        g_reduce_motion = settings_.reduce_motion;
+        ApplyBackdrop();
 
         // Detect the dongle's driver mode (WinUSB vs BTHUSB) once at startup
         RefreshDriverMode();
@@ -598,6 +672,57 @@ namespace winrt::A2DPWBWinUI::implementation
         settings_.save();
         AppendLog(LogTag::Data, settings_.auto_connect_on_start ? "Auto-connect on start: ON"
                                                               : "Auto-connect on start: OFF");
+    }
+
+    void MainWindow::ApplyBackdrop()
+    {
+        if (!uiReady_ && !this->Content()) return;
+
+        const bool wanted = settings_.mica_enabled;
+        const bool hc = InHighContrast();
+
+        if (!wanted || hc) {
+            /* Opaque fallback: clearing SystemBackdrop leaves the window on the
+             * solid theme background, which is exactly what the plan requires
+             * where Mica cannot be used. */
+            this->SystemBackdrop(nullptr);
+            if (auto t = BackdropStateText()) {
+                if (hc) {
+                    t.Text(L"High contrast is on, so the window uses a solid background.");
+                } else {
+                    t.Text(L"Solid background. Turn this on to use the Windows 11 material.");
+                }
+            }
+            return;
+        }
+
+        try {
+            this->SystemBackdrop(Microsoft::UI::Xaml::Media::MicaBackdrop());
+            if (auto t = BackdropStateText()) {
+                t.Text(L"Translucent background active.");
+            }
+        } catch (...) {
+            /* Older Windows build without Mica: fall back to the solid theme
+             * background and say so instead of failing silently. */
+            this->SystemBackdrop(nullptr);
+            if (auto t = BackdropStateText()) {
+                t.Text(L"This Windows version does not support the translucent background; using a solid background.");
+            }
+        }
+    }
+
+    void MainWindow::OnAppearanceChanged(IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&)
+    {
+        if (!uiReady_) return;
+        if (auto c = MicaCheck()) {
+            if (c.IsChecked()) settings_.mica_enabled = true; else settings_.mica_enabled = false;
+        }
+        if (auto c = ReduceMotionCheck()) {
+            g_reduce_motion = c.IsChecked() ? true : false;
+            settings_.reduce_motion = g_reduce_motion;
+        }
+        settings_.save();
+        ApplyBackdrop();
     }
 
     void MainWindow::RememberLastDevice(const std::string& mac, const std::string& name)

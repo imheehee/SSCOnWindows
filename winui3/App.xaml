@@ -27,10 +27,32 @@
                 </ResourceDictionary>
             </ResourceDictionary.ThemeDictionaries>
 
-            <SolidColorBrush x:Key="TagOkBrush"    Color="#3FB950" />
-            <SolidColorBrush x:Key="TagWarnBrush"  Color="#D29922" />
-            <SolidColorBrush x:Key="TagErrorBrush" Color="#F85149" />
-            <SolidColorBrush x:Key="TagDataBrush"  Color="#39B9D2" />
+            <!--
+              Severity state tokens (docs/dev/PLAN_UX_DESIGN.md Faz 3).
+
+              The five states of the contract are: normal (default text colour),
+              success, warning, error and info. "Info" is the Data/tag cyan.
+
+              Every severity is stored as an explicit Light/Dark pair instead of one
+              fixed colour: a single hex cannot stay readable in both themes. The
+              dark values are the CLI ANSI palette; the light values are the same
+              hues darkened until they clear WCAG AA (>= 4.5:1) on a light surface.
+
+              Keys carry the theme suffix because TagBrush() in MainWindow.xaml.cpp
+              resolves them in code - a plain ResourceDictionary.TryLookup() cannot
+              see ResourceDictionary.ThemeDictionaries under C++/WinRT. These are
+              shared, long-lived brush instances: the theme handler recolours them
+              in place, so everything already holding a brush (including every log
+              line) follows the theme without being touched.
+            -->
+            <SolidColorBrush x:Key="TagOkBrushLight"    Color="#1A7F37" />
+            <SolidColorBrush x:Key="TagOkBrushDark"     Color="#3FB950" />
+            <SolidColorBrush x:Key="TagWarnBrushLight"  Color="#9A6700" />
+            <SolidColorBrush x:Key="TagWarnBrushDark"   Color="#D29922" />
+            <SolidColorBrush x:Key="TagErrorBrushLight" Color="#CF222E" />
+            <SolidColorBrush x:Key="TagErrorBrushDark"  Color="#F85149" />
+            <SolidColorBrush x:Key="TagDataBrushLight"  Color="#0E7490" />
+            <SolidColorBrush x:Key="TagDataBrushDark"   Color="#39B9D2" />
 
             <!-- Typography scale (Faz B/C) -->
             <Style x:Key="SectionLabelTextStyle" TargetType="TextBlock">

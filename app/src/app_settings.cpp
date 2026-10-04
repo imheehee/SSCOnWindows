@@ -41,6 +41,10 @@ void AppSettings::load()
     minimize_to_tray   = j.value("minimize_to_tray", minimize_to_tray);
     auto_connect_on_start = j.value("auto_connect_on_start", auto_connect_on_start);
 
+    /* Appearance */
+    mica_enabled  = j.value("mica_enabled", mica_enabled);
+    reduce_motion = j.value("reduce_motion", reduce_motion);
+
     /* Debug */
     debug_mode = j.value("debug_mode", debug_mode);
 
@@ -69,6 +73,10 @@ void AppSettings::save() const
     j["start_minimized"]    = start_minimized;
     j["minimize_to_tray"]   = minimize_to_tray;
     j["auto_connect_on_start"] = auto_connect_on_start;
+
+    /* Appearance */
+    j["mica_enabled"]  = mica_enabled;
+    j["reduce_motion"] = reduce_motion;
 
     /* Debug */
     j["debug_mode"] = debug_mode;

@@ -27,6 +27,16 @@ public:
     bool minimize_to_tray = true;
     bool auto_connect_on_start = false;
 
+    /* Appearance (PLAN_UX_DESIGN Faz 3)
+     * mica_enabled: translucent Mica backdrop. When false the window keeps the
+     *   default opaque background, which is also the fallback on systems that
+     *   do not support Mica or when the user turned transparency effects off.
+     * reduce_motion: skip optional motion. The app has no decorative animation
+     *   today, so this only guards future additions and is a hard opt-out from
+     *   any transition we might add. */
+    bool mica_enabled = true;
+    bool reduce_motion = false;
+
     /* Debug */
     bool debug_mode = false;
 

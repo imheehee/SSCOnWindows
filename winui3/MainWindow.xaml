@@ -310,6 +310,26 @@
                         </StackPanel>
                     </Expander>
 
+                    <!-- ================= Appearance ================= -->
+
+                    <Expander Header="Appearance">
+                        <StackPanel Spacing="8">
+                            <TextBlock Style="{StaticResource CaptionGrayTextStyle}"
+                                       Text="Appearance follows the Windows theme. These options only change how the window looks, never how audio is captured or sent." />
+                            <CheckBox x:Name="MicaCheck"
+                                      Content="Translucent background (Mica)"
+                                      ToolTipService.ToolTip="Windows 11 material behind the window. Turn off for a solid background, or on a machine where transparency effects are disabled."
+                                      Checked="OnAppearanceChanged" Unchecked="OnAppearanceChanged" />
+                            <CheckBox x:Name="ReduceMotionCheck"
+                                      Content="Reduce motion"
+                                      ToolTipService.ToolTip="Skips optional animation. The app has no decorative animation, so this changes little today; it keeps future transitions from moving content."
+                                      Checked="OnAppearanceChanged" Unchecked="OnAppearanceChanged" />
+                            <TextBlock x:Name="BackdropStateText"
+                                       Style="{StaticResource HintGrayTextStyle}"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Expander>
+
                     <!-- ================= Troubleshooting ================= -->
                     <Expander Header="Troubleshooting">
                         <StackPanel Spacing="8" Margin="0,8,0,0">
