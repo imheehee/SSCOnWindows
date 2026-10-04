@@ -127,6 +127,28 @@ gösteriliyor.
 desteklenmeyen ortamda opak yüzeyle çalışır; animasyon kapatıldığında bilgi ve
 işlev kaybolmaz.
 
+**Durum: ✅ Tamamlandı (2026-09-21, `d219e99`).**
+
+Kabul kriterlerinde gerçek bir ihlal bulundu ve düzeltildi: `App.xaml` içindeki
+dört durum fırçası sabit değerdi ve koyu paletten geliyordu, yani açık temada
+başarı yeşili beyaz üzerinde yaklaşık 2,4:1 kontrastta kalıyordu. Artık her
+fırça Light/Dark çifti; açık değerler WCAG AA'yı geçecek şekilde koyulaştırıldı
+(`#1A7F37`, `#9A6700`, `#CF222E`, `#0E7490`). Pencere, `ActualThemeChanged`
+olayında etkin varyantı uzun ömürlü fırça nesnelerine kopyalar; böylece dakikalar
+önce yazılmış günlük satırları dahil her şey yerinde yeniden renklenir, görünüm
+ağacında dolaşmak gerekmez. Yüksek karşıtlıkta renk döndürülmez.
+
+Mica `ApplyBackdrop()` arkasına alındı: kullanıcı kapatabiliyor, ve kullanıcı
+kapatınca, yüksek karşıtlık açıkken ya da işletim sisteminde Mica yoksa pencere
+düz tema arka planına (opak) düşüyor ve nedenini Appearance panelinde yazıyor.
+Sekme metinlerinin tümü `AutomationProperties.Name` taşıyor ve düğmelerde araç
+ipucu var.
+
+Animasyon: uygulamada bugün dekoratif animasyon yok (Storyboard/VisualState
+yok), bu yüzden "hareket azalt" tercihi bugün bir şeyi kapatmıyor; ileride eklenen
+geçişleri koruyor ve planın gereksinimini sessizce yerine getirmemiş olmamak için
+`settings.json`'a bağlandı.
+
 ### Faz 4 — Yerelleştirme ve metin kalitesi
 
 - Türkçe ve İngilizce kaynak metinleri ayrı localization kaynaklarında tut.

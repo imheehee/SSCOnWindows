@@ -11,6 +11,22 @@ Types of changes: **Added** / **Changed** / **Deprecated** / **Removed** /
 
 ### Changed
 
+- **WinUI: theme-aware severity colours, Mica opt-out, motion preference**
+  (`docs/dev/PLAN_UX_DESIGN.md` Faz 3) — the four status colours (ok / warning /
+  error / info) were fixed values taken from the dark palette, so on the light
+  theme the success green sat at roughly 2.4:1 against white and was effectively
+  unreadable. Each is now a Light/Dark pair and the window copies the effective
+  variant into live brushes on `ActualThemeChanged`, which recolours everything
+  already on screen, including log lines written minutes earlier. High contrast
+  yields no colour rather than one the user cannot see. Mica moved behind
+  `ApplyBackdrop()`, so it can be turned off and the window falls back to an
+  opaque background when the user opts out, when high contrast is on, or when the
+  OS has no Mica — stating which of those happened instead of failing quietly.
+  New **Appearance** panel with "Translucent background (Mica)" and "Reduce
+  motion", persisted in `settings.json`. The app has no decorative animation
+  today, so reduce-motion guards future transitions rather than changing the
+  current look.
+
 - **WinUI: headset capabilities and stream-health verdict**
   (`docs/dev/PLAN_UX_DESIGN.md` Faz 2) — `A2dpService::get_device_caps()` now
   exposes what the headset actually advertises (SBC/AAC/SSC, the SSC capability
