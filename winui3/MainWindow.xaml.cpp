@@ -335,9 +335,9 @@ namespace
                 kGlyphError, Tone::Error } },
             { "error.encoder_init",
               { UiText("Encoder could not start", "인코더를 시작할 수 없음"),
-                UiText("The audio encoder (Samsung SSC) failed to initialise, so no audio can be produced.", "SSC 인코더를 초기화하지 못했습니다."),
-                UiText("Check the activity log for the reason. The SSC encoder needs WSL2 (or --ssc-native "
-                "Qiling) running.", "활동 로그와 WSL2 또는 --ssc-native Qiling 실행 상태를 확인하세요."),
+                UiText("The selected audio encoder failed to initialise.", "선택한 오디오 인코더를 초기화하지 못했습니다."),
+                UiText("Check the activity log. For SSC, run the encoder self-test.",
+                       "활동 로그를 확인하세요. SSC를 선택했다면 인코더 자체 테스트를 실행하세요."),
                 kGlyphError, Tone::Error } },
             { "error.stream_start",
               { UiText("Could not start audio", "오디오를 시작할 수 없음"),
@@ -646,8 +646,12 @@ namespace winrt::A2DPWBWinUI::implementation
         AppendLog("Connecting to " + selectedDevice_.name + " [" + profile.codec + "]...");
         RememberLastDevice(profile.device_address, profile.device_name);
 
-        service_->start_streaming(profile);
-        SetStreamingUi(true);
+        if (service_->start_streaming(profile)) {
+            SetStreamingUi(true);
+        } else {
+            AppendLog(LogTag::Warn, UiText("Connection did not start. Check the current operation and try again.",
+                                          "연결을 시작하지 못했습니다. 진행 중인 작업을 확인하고 다시 시도하세요."));
+        }
     }
 
     void MainWindow::OnDirectConnectClick(IInspectable const&, RoutedEventArgs const&)
@@ -692,8 +696,12 @@ namespace winrt::A2DPWBWinUI::implementation
         AppendLog("Direct connect to " + mac + " [" + profile.codec + "]...");
         RememberLastDevice(profile.device_address, profile.device_name);
 
-        service_->start_streaming(profile);
-        SetStreamingUi(true);
+        if (service_->start_streaming(profile)) {
+            SetStreamingUi(true);
+        } else {
+            AppendLog(LogTag::Warn, UiText("Connection did not start. Check the current operation and try again.",
+                                          "연결을 시작하지 못했습니다. 진행 중인 작업을 확인하고 다시 시도하세요."));
+        }
     }
 
     void MainWindow::OnClearLogClick(IInspectable const&, RoutedEventArgs const&)
@@ -962,8 +970,12 @@ namespace winrt::A2DPWBWinUI::implementation
         AppendLog(logText + " -> " + name + " [" + profile.codec + "]...");
         RememberLastDevice(mac, name);
 
-        service_->start_streaming(profile);
-        SetStreamingUi(true);
+        if (service_->start_streaming(profile)) {
+            SetStreamingUi(true);
+        } else {
+            AppendLog(LogTag::Warn, UiText("Connection did not start. Check the current operation and try again.",
+                                          "연결을 시작하지 못했습니다. 진행 중인 작업을 확인하고 다시 시도하세요."));
+        }
     }
 
     void MainWindow::OnReconnectLastClick(IInspectable const&, RoutedEventArgs const&)

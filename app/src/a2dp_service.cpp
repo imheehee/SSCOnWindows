@@ -991,7 +991,7 @@ void A2dpService::scan_thread_func_inner() {
 /* Streaming                                                                 */
 /* ======================================================================== */
 
-void A2dpService::start_streaming(const ConnectionProfile &profile) {
+bool A2dpService::start_streaming(const ConnectionProfile &profile) {
     fprintf(stderr, "A2dpService: start_streaming called, running=%d\n", running_.load());
     fprintf(stderr, "A2dpService:   profile='%s' codec=%s bit_depth=%u sample_rate=%u\n",
             profile.name.c_str(), profile.codec.c_str(), profile.bit_depth, profile.sample_rate);
@@ -999,7 +999,7 @@ void A2dpService::start_streaming(const ConnectionProfile &profile) {
             profile.capture_mode.c_str(), profile.audio_device_name.c_str(), profile.auto_switch_device);
     fflush(stderr);
 
-    if (running_.load()) return;
+    if (bluetooth_busy()) return false;
 
     active_profile_ = profile;
     stop_requested_.store(false);
@@ -1022,10 +1022,11 @@ void A2dpService::start_streaming(const ConnectionProfile &profile) {
     } catch (...) {
         running_.store(false);
         notify_state(State::Error, L("error.btstack_crash_stream"));
-        return;
+        return false;
     }
     fprintf(stderr, "A2dpService: new worker thread started\n");
     fflush(stderr);
+    return true;
 }
 
 void A2dpService::stop_streaming() {
@@ -1366,6 +1367,10 @@ void A2dpService::streaming_thread_func_inner() {
         if (selected_codec == AudioCodec::SSC) {
             std::lock_guard<std::mutex> lock(ssc_error_mutex_);
             ssc_error_ = static_cast<SscEncoder *>(encoder.get())->last_error();
+        }
+        if (!original_default_device_.empty()) {
+            AudioDeviceEnumerator::set_default_device(original_default_device_);
+            original_default_device_.clear();
         }
         notify_state(State::Error, L("error.encoder_init"));
         transport->disconnect();

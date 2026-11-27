@@ -128,7 +128,7 @@ public:
     }
 
     /* ---- Streaming control ---- */
-    void start_streaming(const ConnectionProfile &profile);
+    bool start_streaming(const ConnectionProfile &profile);
     void stop_streaming();
 
     /* ---- Device scanning ---- */
