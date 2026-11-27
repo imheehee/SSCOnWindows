@@ -51,8 +51,8 @@ struct OemChipMapping {
 
 class BtAdapterEnumerator {
 public:
-    /* Enumerate all connected USB Bluetooth adapters. */
-    static std::vector<BtAdapterInfo> enumerate();
+    /* Enumerate streaming candidates, or A760 WinUSB interfaces for diagnostics. */
+    static std::vector<BtAdapterInfo> enumerate(bool a760_only = false);
 
     /* Scan config directory for *_fw.bin / *_config.bin pairs. */
     static std::vector<FirmwareFileEntry> scan_firmware_files(const std::string &config_dir);

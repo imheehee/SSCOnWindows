@@ -1,0 +1,264 @@
+<?xml version='1.0' encoding='utf-8'?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <data name="ScanButton.Content" xml:space="preserve">
+    <value>Scan Devices</value>
+  </data>
+  <data name="ScanButton.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Rescan for nearby Bluetooth audio devices (~8 s)</value>
+  </data>
+  <data name="ConnectButton.Content" xml:space="preserve">
+    <value>Connect</value>
+  </data>
+  <data name="ConnectButton.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Connect to the device selected in the list</value>
+  </data>
+  <data name="DirectConnectButton.Content" xml:space="preserve">
+    <value>Direct Connect</value>
+  </data>
+  <data name="DirectConnectButton.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Connect straight to a known Bluetooth address</value>
+  </data>
+  <data name="ReconnectLastButton.Content" xml:space="preserve">
+    <value>Reconnect Last</value>
+  </data>
+  <data name="ReconnectLastButton.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Reconnect to the device used most recently</value>
+  </data>
+  <data name="ClearButton.Content" xml:space="preserve">
+    <value>Clear Log</value>
+  </data>
+  <data name="ClearButton.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Empty the activity log</value>
+  </data>
+  <data name="SetupButton.Content" xml:space="preserve">
+    <value>Setup &amp; Help</value>
+  </data>
+  <data name="SetupButton.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>First-time pairing steps and troubleshooting FAQ</value>
+  </data>
+  <data name="StatusGlyph.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Application state</value>
+  </data>
+  <data name="StatusHeadlineText.Text" xml:space="preserve">
+    <value>Ready</value>
+  </data>
+  <data name="StatusDetailText.Text" xml:space="preserve">
+    <value>Not connected to a device yet.</value>
+  </data>
+  <data name="Device.Text" xml:space="preserve">
+    <value>Device</value>
+  </data>
+  <data name="ConnectedDevice.Text" xml:space="preserve">
+    <value>Connected device</value>
+  </data>
+  <data name="DeviceListView.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Nearby Bluetooth audio devices</value>
+  </data>
+  <data name="DeviceListView.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Pick a device, then press Connect</value>
+  </data>
+  <data name="ConnectByAddress.Text" xml:space="preserve">
+    <value>Connect by address</value>
+  </data>
+  <data name="MacAddressBox.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Bluetooth address for direct connect</value>
+  </data>
+  <data name="PressDirectConnectInTheHeaderToUseIt.Text" xml:space="preserve">
+    <value>Press 'Direct Connect' in the header to use it.</value>
+  </data>
+  <data name="HeadsetCapabilities.Text" xml:space="preserve">
+    <value>Headset capabilities</value>
+  </data>
+  <data name="DeviceCapsText.Text" xml:space="preserve">
+    <value>Not known until connected.</value>
+  </data>
+  <data name="DeviceCapsHintText.Text" xml:space="preserve">
+    <value>Codec support is read from the headset's A2DP capabilities once a link is up.</value>
+  </data>
+  <data name="AudioStatus.Text" xml:space="preserve">
+    <value>Audio status</value>
+  </data>
+  <data name="CodecText.Text" xml:space="preserve">
+    <value>Codec: —</value>
+  </data>
+  <data name="BitrateText.Text" xml:space="preserve">
+    <value>Bitrate: —</value>
+  </data>
+  <data name="SampleRateText.Text" xml:space="preserve">
+    <value>Sample rate: —</value>
+  </data>
+  <data name="ChannelsText.Text" xml:space="preserve">
+    <value>Channels: —</value>
+  </data>
+  <data name="SourceInfoText.Text" xml:space="preserve">
+    <value>Source: —</value>
+  </data>
+  <data name="AudioStatusHintText.Text" xml:space="preserve">
+    <value>Connect a device to see the active stream settings.</value>
+  </data>
+  <data name="LiveStatistics.Text" xml:space="preserve">
+    <value>Live statistics</value>
+  </data>
+  <data name="StreamHealthText.Text" xml:space="preserve">
+    <value>No data yet</value>
+  </data>
+  <data name="LatencyText.Text" xml:space="preserve">
+    <value>Latency: —</value>
+  </data>
+  <data name="ErrorRateText.Text" xml:space="preserve">
+    <value>Error rate: —</value>
+  </data>
+  <data name="LossRateText.Text" xml:space="preserve">
+    <value>Loss rate: —</value>
+  </data>
+  <data name="QueueText.Text" xml:space="preserve">
+    <value>Queue: —</value>
+  </data>
+  <data name="SparklineCaption.Text" xml:space="preserve">
+    <value>Latency (0–25 ms) / Error rate (0–5 %)</value>
+  </data>
+  <data name="AudioSettings.Header" xml:space="preserve">
+    <value>Audio settings</value>
+  </data>
+  <data name="Codec.Text" xml:space="preserve">
+    <value>Codec</value>
+  </data>
+  <data name="CodecCombo.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Audio codec for Bluetooth streaming. SSC (Samsung Scalable Codec) offers the highest quality.</value>
+  </data>
+  <data name="Quality.Text" xml:space="preserve">
+    <value>Quality</value>
+  </data>
+  <data name="QualityCombo.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Encoding quality level. Higher quality uses more bandwidth.</value>
+  </data>
+  <data name="High.Content" xml:space="preserve">
+    <value>High</value>
+  </data>
+  <data name="Standard.Content" xml:space="preserve">
+    <value>Standard</value>
+  </data>
+  <data name="Mobile.Content" xml:space="preserve">
+    <value>Mobile</value>
+  </data>
+  <data name="SampleRate.Text" xml:space="preserve">
+    <value>Sample rate</value>
+  </data>
+  <data name="RateCombo.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Higher rates improve quality but use more bandwidth. 96 kHz (UHQ) needs a UHQ-capable headset and is upsampled from 48 kHz.</value>
+  </data>
+  <data name="SscStandard48Khz.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>SSC standard 48 kHz</value>
+  </data>
+  <data name="SscUhq96KhzRequires2XSrc.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>SSC UHQ (96 kHz, requires 2x SRC)</value>
+  </data>
+  <data name="BitDepth.Text" xml:space="preserve">
+    <value>Bit depth</value>
+  </data>
+  <data name="BitDepthCombo.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>PCM bit depth. Sample width is fixed per codec at runtime (SSC: 32-bit, SBC/AAC: 16-bit).</value>
+  </data>
+  <data name="Auto.Content" xml:space="preserve">
+    <value>Auto</value>
+  </data>
+  <data name="16Bit.Content" xml:space="preserve">
+    <value>16-bit</value>
+  </data>
+  <data name="24Bit.Content" xml:space="preserve">
+    <value>24-bit</value>
+  </data>
+  <data name="32Bit.Content" xml:space="preserve">
+    <value>32-bit</value>
+  </data>
+  <data name="Bitrate.Text" xml:space="preserve">
+    <value>Bitrate</value>
+  </data>
+  <data name="BitrateValueText.Text" xml:space="preserve">
+    <value>auto</value>
+  </data>
+  <data name="0Auto.Text" xml:space="preserve">
+    <value>(0 = auto)</value>
+  </data>
+  <data name="BitrateSlider.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Target bitrate. 0 picks the best value the active codec mode allows.</value>
+  </data>
+  <data name="Volume.Text" xml:space="preserve">
+    <value>Volume</value>
+  </data>
+  <data name="VolumeSlider.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Device volume (AVRCP absolute volume)</value>
+  </data>
+  <data name="AutoMuteCheck.Content" xml:space="preserve">
+    <value>Mute speakers while streaming</value>
+  </data>
+  <data name="AutoMuteCheck.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Mutes the Windows render endpoint while streaming. Loopback capture is pre-mix, so the headset audio is unaffected.</value>
+  </data>
+  <data name="AutoConnectCheck.Content" xml:space="preserve">
+    <value>Auto-connect last device on start</value>
+  </data>
+  <data name="AutoConnectCheck.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Resume the last used device when the app launches (needs the dongle in WinUSB mode).</value>
+  </data>
+  <data name="Appearance.Header" xml:space="preserve">
+    <value>Appearance</value>
+  </data>
+  <data name="AppearanceHint.Text" xml:space="preserve">
+    <value>Appearance follows the Windows theme. These options only change how the window looks, never how audio is captured or sent.</value>
+  </data>
+  <data name="MicaCheck.Content" xml:space="preserve">
+    <value>Translucent background (Mica)</value>
+  </data>
+  <data name="MicaCheck.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Windows 11 material behind the window. Turn off for a solid background, or on a machine where transparency effects are disabled.</value>
+  </data>
+  <data name="ReduceMotionCheck.Content" xml:space="preserve">
+    <value>Reduce motion</value>
+  </data>
+  <data name="ReduceMotionCheck.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Skips optional animation. The app has no decorative animation, so this changes little today; it keeps future transitions from moving content.</value>
+  </data>
+  <data name="Troubleshooting.Header" xml:space="preserve">
+    <value>Troubleshooting</value>
+  </data>
+  <data name="DriverStateText.Text" xml:space="preserve">
+    <value>Detecting...</value>
+  </data>
+  <data name="RefreshDriverButton.Content" xml:space="preserve">
+    <value>Refresh</value>
+  </data>
+  <data name="RefreshDriverButton.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Re-read the dongle's driver mode</value>
+  </data>
+  <data name="DriverHintText.Text" xml:space="preserve">
+    <value>Streaming needs the USB dongle to use WinUSB. Stop streaming before changing the driver in Device Manager.</value>
+  </data>
+  <data name="EnableStreamingButton.Content" xml:space="preserve">
+    <value>WinUSB Setup Instructions</value>
+  </data>
+  <data name="RestoreBtButton.Content" xml:space="preserve">
+    <value>Windows Bluetooth Restore Instructions</value>
+  </data>
+  <data name="A760DiagnosticsButton.Content" xml:space="preserve">
+    <value>A760 HCI diagnostics</value>
+  </data>
+  <data name="DriverRefreshHint.Text" xml:space="preserve">
+    <value>Refresh after installing or restoring the driver in Device Manager.</value>
+  </data>
+  <data name="ActivityLog.Text" xml:space="preserve">
+    <value>Activity log</value>
+  </data>
+  <data name="LogToggleButton.Content" xml:space="preserve">
+    <value>Hide log</value>
+  </data>
+  <data name="LogToggleButton.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Show or hide the activity log. Entries are kept while it is hidden.</value>
+  </data>
+</root>

@@ -24,6 +24,23 @@ if(EXISTS ${BTSTACK_ROOT}/src/hci.c)
     file(GLOB BTSTACK_CLASSIC_SRC ${BTSTACK_ROOT}/src/classic/*.c)
     # Windows platform sources (run loop, WinUSB HCI transport, TLV storage)
     file(GLOB BTSTACK_WINDOWS_SRC ${BTSTACK_ROOT}/platform/windows/*.c)
+    # BTstack probes generic Bluetooth-class interfaces as well as its VID/PID
+    # table. Keep A760 out of streaming even with a forced firmware setting.
+    set(BTSTACK_WINUSB ${BTSTACK_ROOT}/platform/windows/hci_transport_h2_winusb.c)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${BTSTACK_WINUSB}")
+    file(READ "${BTSTACK_WINUSB}" winusb_source)
+    set(open_function "static int usb_try_open_device(const char * device_path){")
+    string(FIND "${winusb_source}" "${open_function}" open_offset)
+    if(open_offset EQUAL -1)
+        message(FATAL_ERROR "Cannot exclude A760 from the BTstack WinUSB transport")
+    endif()
+    string(REPLACE "${open_function}"
+        "${open_function}\n    if (strlen(device_path) >= 8 && _strnicmp(device_path + 8, \"vid_0bda&pid_a760\", 17) == 0) return 0;"
+        winusb_source "${winusb_source}")
+    list(REMOVE_ITEM BTSTACK_WINDOWS_SRC "${BTSTACK_WINUSB}")
+    set(generated_winusb "${CMAKE_CURRENT_BINARY_DIR}/hci_transport_h2_winusb.c")
+    file(GENERATE OUTPUT "${generated_winusb}" CONTENT "${winusb_source}")
+    list(APPEND BTSTACK_WINDOWS_SRC "${generated_winusb}")
     # 3rd-party dependencies
     set(BTSTACK_3RDPARTY_SRC
         ${BTSTACK_ROOT}/3rd-party/rijndael/rijndael.c

@@ -70,7 +70,7 @@ the actual Samsung aarch64 blob, run inside an emulator behind a local TCP daemo
 
 - **SSC (Samsung Scalable Codec)**: High / Standard / Mobile, plus 96 kHz UHQ on capable sinks
 - **AAC and SBC** fallback codecs
-- **In-app driver toggle**: switch the dongle between WinUSB and Windows Bluetooth (no Zadig needed)
+- **Driver setup and recovery**: view the dongle’s status and follow Device Manager instructions for signed WinUSB and Windows Bluetooth drivers
 - **Two capture modes**: system loopback or virtual audio device routing
 - **Auto-reconnect** on disconnection (up to 10 attempts)
 - **AVRCP absolute volume**: control headphone volume from the app

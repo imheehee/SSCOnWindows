@@ -4,11 +4,14 @@
 #include "MainWindow.g.cpp"
 #endif
 #include "driver_mode.h"
+#include "a760_diagnostics.h"
 #include "driver_switch.h"
 #include "ssc_encoder.h"
 
 #include <thread>
 #include <cwchar>
+#include <optional>
+#include <utility>
 #include <winrt/Windows.UI.ViewManagement.h>
 
 using namespace winrt;
@@ -17,6 +20,43 @@ using namespace Microsoft::UI::Xaml::Controls;
 
 namespace
 {
+    bool IsKorean()
+    {
+        return PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_KOREAN;
+    }
+
+    const char* UiText(const char* english, const char* korean)
+    {
+        return IsKorean() ? korean : english;
+    }
+
+    const wchar_t* UiText(const wchar_t* english, const wchar_t* korean)
+    {
+        return IsKorean() ? korean : english;
+    }
+
+    struct Rtl8761Adapter {
+        uint16_t vid;
+        uint16_t pid;
+        uint16_t firmware_pid;
+        DongleDriverStatus status;
+    };
+
+    std::optional<Rtl8761Adapter> FindRtl8761Adapter()
+    {
+        constexpr uint16_t firmware_pid = 0x8771;
+        std::optional<Rtl8761Adapter> selected;
+        for (const auto& id : {std::pair{0x2357, 0x0604}, std::pair{0x0BDA, 0x8771}}) {
+            auto vid = static_cast<uint16_t>(id.first);
+            auto pid = static_cast<uint16_t>(id.second);
+            auto status = detect_dongle_driver(vid, pid);
+            if (status.mode == DongleDriverMode::NotPresent) continue;
+            if (selected) return std::nullopt;
+            selected = Rtl8761Adapter{vid, pid, firmware_pid, std::move(status)};
+        }
+        return selected;
+    }
+
     std::string WToA(hstring const& ws)
     {
         if (ws.empty()) return {};
@@ -139,106 +179,130 @@ namespace
     const StateCopy& CopyForKey(const std::string& key)
     {
         static const StateCopy kUnknown{
-            "Working on it",
-            "The app is busy setting things up.",
-            "", kGlyphSync, Tone::Info };
+            UiText("Working on it", "처리 중"),
+                UiText("The app is busy setting things up.", "앱이 준비 중입니다."),
+                "",
+                kGlyphSync, Tone::Info };
 
         static const std::pair<const char*, StateCopy> kTable[] = {
             /* ---- healthy transitions ---- */
             { "status.ready",
-              { "Ready", "No device connected yet.",
-                "Press 'Scan Devices' to look for headsets, or 'Direct Connect' if you know the address.",
+              { UiText("Ready", "준비됨"),
+                UiText("No device connected yet.", "연결된 장치가 없습니다."),
+                UiText("Press 'Scan Devices' to look for headsets, or 'Direct Connect' if you know the address.", "장치 검색으로 헤드셋을 찾거나 주소로 연결하세요."),
                 kGlyphInfo, Tone::Info } },
             { "status.initializing",
-              { "Starting up", "Bringing up the Bluetooth stack.",
-                "", kGlyphSync, Tone::Info } },
+              { UiText("Starting up", "시작 중"),
+                UiText("Bringing up the Bluetooth stack.", "Bluetooth 스택을 시작하고 있습니다."),
+                "",
+                kGlyphSync, Tone::Info } },
             { "status.initializing_btstack",
-              { "Starting the dongle",
-                "Opening the USB Bluetooth dongle and loading its firmware.",
-                "This takes a second. Keep the dongle plugged in.", kGlyphSync, Tone::Info } },
+              { UiText("Starting the dongle", "동글 시작 중"),
+                UiText("Opening the USB Bluetooth dongle and loading its firmware.", "USB Bluetooth 동글을 열고 펌웨어를 불러옵니다."),
+                UiText("This takes a second. Keep the dongle plugged in.", "동글을 연결한 상태로 기다리세요."),
+                kGlyphSync, Tone::Info } },
             { "status.connecting_device",
-              { "Pairing with the headset", "Negotiating the A2DP profile.",
-                "Keep the headset close, powered on and out of the case.", kGlyphSync, Tone::Info } },
+              { UiText("Pairing with the headset", "헤드셋 페어링 중"),
+                UiText("Negotiating the A2DP profile.", "A2DP 프로필을 협상하고 있습니다."),
+                UiText("Keep the headset close, powered on and out of the case.", "헤드셋 전원을 켜고 케이스에서 꺼낸 뒤 가까이 두세요."),
+                kGlyphSync, Tone::Info } },
             { "status.initializing_audio",
-              { "Starting audio", "Opening Windows loopback capture and the audio encoder.",
-                "", kGlyphSync, Tone::Info } },
+              { UiText("Starting audio", "오디오 시작 중"),
+                UiText("Opening Windows loopback capture and the audio encoder.", "Windows 루프백 캡처와 인코더를 시작합니다."),
+                "",
+                kGlyphSync, Tone::Info } },
             { "status.connected",
-              { "Connected", "The headset accepted the connection.",
-                "", kGlyphCheck, Tone::Ok } },
+              { UiText("Connected", "연결됨"),
+                UiText("The headset accepted the connection.", "헤드셋이 연결을 수락했습니다."),
+                "",
+                kGlyphCheck, Tone::Ok } },
             { "status.reconnected",
-              { "Reconnected", "The headset link came back up.",
-                "", kGlyphCheck, Tone::Ok } },
+              { UiText("Reconnected", "다시 연결됨"),
+                UiText("The headset link came back up.", "헤드셋 연결이 복구됐습니다."),
+                "",
+                kGlyphCheck, Tone::Ok } },
             { "status.connection_lost",
-              { "Connection lost", "The headset link dropped.",
-                "Reconnect, or move closer to the dongle.", kGlyphWarning, Tone::Warn } },
+              { UiText("Connection lost", "연결 끊김"),
+                UiText("The headset link dropped.", "헤드셋 연결이 끊겼습니다."),
+                UiText("Reconnect, or move closer to the dongle.", "동글에 가까이 이동한 뒤 다시 연결하세요."),
+                kGlyphWarning, Tone::Warn } },
 
             /* ---- actionable errors ---- */
             { "error.invalid_address",
-              { "Check the address",
-                "That Bluetooth address is not in the expected XX:XX:XX:XX:XX:XX form.",
-                "Fix the address, then press 'Direct Connect'.", kGlyphError, Tone::Error } },
+              { UiText("Check the address", "주소를 확인하세요"),
+                UiText("That Bluetooth address is not in the expected XX:XX:XX:XX:XX:XX form.", "Bluetooth 주소 형식은 XX:XX:XX:XX:XX:XX입니다."),
+                UiText("Fix the address, then press 'Direct Connect'.", "주소를 수정한 뒤 주소로 연결을 누르세요."),
+                kGlyphError, Tone::Error } },
             { "error.pairing_hint",
-              { "Headset not found",
-                "The headset did not answer the scan. It may be switched off, already connected to "
-                "another device, or out of pairing mode.",
-                "Put both earbuds in the case, hold them until the LED blinks, then press "
-                "'Scan Devices' again.", kGlyphError, Tone::Error } },
+              { UiText("Headset not found", "헤드셋을 찾을 수 없음"),
+                UiText("The headset did not answer the scan. It may be switched off, already connected to "
+                "another device, or out of pairing mode.", "헤드셋의 전원, 다른 장치와의 연결 및 페어링 모드를 확인하세요."),
+                UiText("Put both earbuds in the case, hold them until the LED blinks, then press "
+                "'Scan Devices' again.", "이어버드를 페어링 모드로 전환한 뒤 다시 검색하세요."),
+                kGlyphError, Tone::Error } },
             { "error.no_compatible_codec",
-              { "No compatible codec",
-                "This headset does not offer a codec the app can use (SSC, AAC or SBC), so it cannot "
-                "be streamed to.",
-                "Try another codec under 'Audio settings'. If none work, this headset is not supported.",
+              { UiText("No compatible codec", "호환 코덱 없음"),
+                UiText("This headset does not offer a codec the app can use (SSC, AAC or SBC), so it cannot "
+                "be streamed to.", "헤드셋이 앱에서 사용할 수 있는 SSC, AAC, SBC 코덱을 제공하지 않습니다."),
+                UiText("Try another codec under 'Audio settings'. If none work, this headset is not supported.", "오디오 설정에서 지원 코덱을 확인하세요."),
                 kGlyphError, Tone::Error } },
             { "error.btstack_init",
-              { "Dongle not available",
-                "The USB Bluetooth dongle could not be opened, so no connection is possible.",
-                "Open 'Troubleshooting' and check the dongle shows 'WinUSB (Streaming mode)'. "
-                "If not, press 'Enable Streaming (WinUSB)'.", kGlyphError, Tone::Error } },
+              { UiText("Dongle not available", "동글을 열 수 없음"),
+                UiText("The USB Bluetooth dongle could not be opened, so no connection is possible.", "USB Bluetooth 동글을 열지 못했습니다."),
+                UiText("Open 'Troubleshooting' and check the dongle shows 'WinUSB (Streaming mode)'. "
+                "If needed, open the WinUSB setup instructions.", "문제 해결에서 동글의 WinUSB 상태와 설정 안내를 확인하세요."),
+                kGlyphError, Tone::Error } },
             { "error.codec_configure",
-              { "Codec rejected",
-                "The headset refused the codec configuration - usually an unsupported bitrate or "
-                "sample rate for this device.",
-                "Set bitrate to 0 (auto), pick sample rate 48k, then reconnect.", kGlyphError, Tone::Error } },
+              { UiText("Codec rejected", "코덱 설정 거부됨"),
+                UiText("The headset refused the codec configuration - usually an unsupported bitrate or "
+                "sample rate for this device.", "헤드셋이 코덱 설정을 거부했습니다. 비트 전송률과 샘플링 주파수를 확인하세요."),
+                UiText("Set bitrate to 0 (auto), pick sample rate 48k, then reconnect.", "비트 전송률을 0(자동), 샘플링 주파수를 48 kHz로 설정하고 다시 연결하세요."),
+                kGlyphError, Tone::Error } },
             { "error.encoder_init",
-              { "Encoder could not start",
-                "The audio encoder (Samsung SSC) failed to initialise, so no audio can be produced.",
-                "Check the activity log for the reason. The SSC encoder needs WSL2 (or --ssc-native "
-                "Qiling) running.", kGlyphError, Tone::Error } },
+              { UiText("Encoder could not start", "인코더를 시작할 수 없음"),
+                UiText("The audio encoder (Samsung SSC) failed to initialise, so no audio can be produced.", "SSC 인코더를 초기화하지 못했습니다."),
+                UiText("Check the activity log for the reason. The SSC encoder needs WSL2 (or --ssc-native "
+                "Qiling) running.", "활동 로그와 WSL2 또는 --ssc-native Qiling 실행 상태를 확인하세요."),
+                kGlyphError, Tone::Error } },
             { "error.stream_start",
-              { "Could not start audio",
-                "The headset accepted the connection but the audio stream would not start.",
-                "Disconnect and reconnect. If it repeats, unplug and replug the dongle.",
+              { UiText("Could not start audio", "오디오를 시작할 수 없음"),
+                UiText("The headset accepted the connection but the audio stream would not start.", "헤드셋이 연결을 수락했지만 오디오 스트림을 시작하지 못했습니다."),
+                UiText("Disconnect and reconnect. If it repeats, unplug and replug the dongle.", "다시 연결하세요. 문제가 반복되면 동글을 뺐다가 연결하세요."),
                 kGlyphError, Tone::Error } },
             { "error.wasapi_init",
-              { "Audio capture failed",
-                "Windows loopback capture could not be opened, so there is no audio to stream.",
-                "Check that the default playback device is active and its format is set to 48 kHz.",
+              { UiText("Audio capture failed", "오디오 캡처 실패"),
+                UiText("Windows loopback capture could not be opened, so there is no audio to stream.", "Windows 루프백 캡처를 열지 못했습니다."),
+                UiText("Check that the default playback device is active and its format is set to 48 kHz.", "기본 재생 장치가 활성화됐는지, 형식이 48 kHz인지 확인하세요."),
                 kGlyphError, Tone::Error } },
             { "error.encode_thread",
-              { "Encoder stopped",
-                "The thread that encodes and sends audio stopped unexpectedly.",
-                "Read the activity log, then reconnect.", kGlyphError, Tone::Error } },
+              { UiText("Encoder stopped", "인코더 중지됨"),
+                UiText("The thread that encodes and sends audio stopped unexpectedly.", "오디오 인코딩 및 전송이 예기치 않게 중지됐습니다."),
+                UiText("Read the activity log, then reconnect.", "활동 로그를 확인한 후 다시 연결하세요."),
+                kGlyphError, Tone::Error } },
             { "error.reconnect_failed",
-              { "Reconnect failed",
-                "Automatic reconnection gave up after several attempts.",
-                "Press 'Reconnect Last', or scan again if the headset was reset.", kGlyphError, Tone::Error } },
+              { UiText("Reconnect failed", "재연결 실패"),
+                UiText("Automatic reconnection gave up after several attempts.", "여러 차례 자동 재연결을 시도했지만 연결되지 않았습니다."),
+                UiText("Press 'Reconnect Last', or scan again if the headset was reset.", "마지막 장치에 다시 연결하거나 헤드셋을 다시 검색하세요."),
+                kGlyphError, Tone::Error } },
             { "error.btstack_crash_scan",
-              { "Bluetooth stack stopped while scanning",
-                "The Bluetooth stack stopped unexpectedly during the device scan.",
-                "Unplug and replug the dongle, then scan again.", kGlyphError, Tone::Error } },
+              { UiText("Bluetooth stack stopped while scanning", "검색 중 Bluetooth 스택 중지"),
+                UiText("The Bluetooth stack stopped unexpectedly during the device scan.", "장치 검색 중 Bluetooth 스택이 예기치 않게 중지됐습니다."),
+                UiText("Unplug and replug the dongle, then scan again.", "동글을 뺐다가 연결한 후 다시 검색하세요."),
+                kGlyphError, Tone::Error } },
             { "error.btstack_crash_stream",
-              { "Bluetooth stack stopped while streaming",
-                "The Bluetooth stack stopped unexpectedly, so audio stopped.",
-                "Unplug and replug the dongle, then reconnect.", kGlyphError, Tone::Error } },
+              { UiText("Bluetooth stack stopped while streaming", "스트리밍 중 Bluetooth 스택 중지"),
+                UiText("The Bluetooth stack stopped unexpectedly, so audio stopped.", "Bluetooth 스택이 중지되어 오디오가 끊겼습니다."),
+                UiText("Unplug and replug the dongle, then reconnect.", "동글을 뺐다가 연결한 후 다시 연결하세요."),
+                kGlyphError, Tone::Error } },
             { "error.aac_unavailable",
-              { "AAC not available",
-                "This build has no AAC encoder, so the stream falls back to SBC.",
-                "Prefer SSC (Samsung Scalable Codec) for the best quality on Galaxy earbuds.",
+              { UiText("AAC not available", "AAC를 사용할 수 없음"),
+                UiText("This build has no AAC encoder, so the stream falls back to SBC.", "이 빌드에는 AAC 인코더가 없어 SBC를 사용합니다."),
+                UiText("Prefer SSC (Samsung Scalable Codec) for the best quality on Galaxy earbuds.", "Galaxy 이어버드를 사용한다면 SSC를 선택할 수 있습니다."),
                 kGlyphWarning, Tone::Warn } },
             { "error.virtual_capture_init",
-              { "Virtual audio device unavailable",
-                "The virtual audio endpoint needed to capture microphone input could not be created.",
-                "Install the virtual output driver, or switch the capture mode to loopback.",
+              { UiText("Virtual audio device unavailable", "가상 오디오 장치를 사용할 수 없음"),
+                UiText("The virtual audio endpoint needed to capture microphone input could not be created.", "마이크 입력 캡처에 필요한 가상 오디오 장치를 만들지 못했습니다."),
+                UiText("Install the virtual output driver, or switch the capture mode to loopback.", "가상 출력 드라이버를 설치하거나 루프백 캡처로 전환하세요."),
                 kGlyphError, Tone::Error } },
         };
 
@@ -254,21 +318,31 @@ namespace
     {
         switch (state) {
         case A2dpService::State::Connecting:
-            return { "Connecting...", "Talking to the headset.",
-                     "Keep the headset close and powered on.", kGlyphSync, Tone::Info };
+            return { UiText("Connecting...", "연결 중…"),
+                UiText("Talking to the headset.", "헤드셋과 연결을 설정하고 있습니다."),
+                UiText("Keep the headset close and powered on.", "헤드셋 전원을 켜고 가까이 두세요."),
+                kGlyphSync, Tone::Info };
         case A2dpService::State::Streaming:
-            return { "Streaming audio", "Windows audio is on its way to the headset.",
-                     "", kGlyphCheck, Tone::Ok };
+            return { UiText("Streaming audio", "오디오 스트리밍 중"),
+                UiText("Windows audio is on its way to the headset.", "Windows 오디오를 헤드셋에 보내고 있습니다."),
+                "",
+                kGlyphCheck, Tone::Ok };
         case A2dpService::State::Reconnecting:
-            return { "Reconnecting...", "The link dropped; retrying automatically.",
-                     "If this keeps happening, press 'Reconnect Last'.", kGlyphSync, Tone::Warn };
+            return { UiText("Reconnecting...", "재연결 중…"),
+                UiText("The link dropped; retrying automatically.", "연결이 끊겨 자동으로 다시 연결하고 있습니다."),
+                UiText("If this keeps happening, press 'Reconnect Last'.", "반복되면 마지막 장치에 다시 연결을 누르세요."),
+                kGlyphSync, Tone::Warn };
         case A2dpService::State::Error:
-            return { "Something went wrong", "The last operation did not finish.",
-                     "See the activity log below for the raw error.", kGlyphError, Tone::Error };
+            return { UiText("Something went wrong", "작업 실패"),
+                UiText("The last operation did not finish.", "이전 작업을 완료하지 못했습니다."),
+                UiText("See the activity log below for the raw error.", "활동 로그에서 오류를 확인하세요."),
+                kGlyphError, Tone::Error };
         case A2dpService::State::Idle:
         default:
-            return { "Ready", "Not connected to a device.",
-                     "Press 'Scan Devices' to look for headsets.", kGlyphInfo, Tone::Info };
+            return { UiText("Ready", "준비됨"),
+                UiText("Not connected to a device.", "연결된 장치가 없습니다."),
+                UiText("Press 'Scan Devices' to look for headsets.", "장치 검색을 눌러 헤드셋을 찾으세요."),
+                kGlyphInfo, Tone::Info };
         }
     }
 }
@@ -306,7 +380,11 @@ namespace winrt::A2DPWBWinUI::implementation
         // Load settings and saved devices (mirrors wxWidgets MainFrame init)
         settings_.load();
         service_->load_saved_devices();
-        service_->set_bt_chip_pid(settings_.bt_chip_pid);
+        const auto adapter = FindRtl8761Adapter();
+        const bool adapter_ready = adapter && adapter->status.mode == DongleDriverMode::WinUsbStream;
+        const auto chip_pid = settings_.bt_chip_pid == 0 && adapter_ready
+            ? adapter->firmware_pid : settings_.bt_chip_pid;
+        service_->set_bt_chip_pid(chip_pid);
         service_->set_bt_chip_fw_stem(settings_.bt_chip_fw_stem);
         service_->set_debug_mode(settings_.debug_mode);
         service_->set_auto_mute_output(true);
@@ -324,16 +402,16 @@ namespace winrt::A2DPWBWinUI::implementation
         service_->set_stream_info_callback([this](const A2dpService::StreamInfo& info) {
             auto captured = this;
             dispatcher_.TryEnqueue([captured, info]() {
-                captured->CodecText().Text(L"Codec: " + AToW(info.codec));
-                captured->BitrateText().Text(L"Bitrate: " + AToW(std::to_string(info.bitrate_kbps) + " kbps"));
-                captured->SampleRateText().Text(L"Sample Rate: " + AToW(std::to_string(info.sample_rate) + " Hz"));
-                captured->ChannelsText().Text(L"Channels: " + AToW(std::to_string(info.channels)));
+                captured->CodecText().Text(UiText(L"Codec: ", L"코덱: ") + AToW(info.codec));
+                captured->BitrateText().Text(UiText(L"Bitrate: ", L"비트 전송률: ") + AToW(std::to_string(info.bitrate_kbps) + " kbps"));
+                captured->SampleRateText().Text(UiText(L"Sample Rate: ", L"샘플링 주파수: ") + AToW(std::to_string(info.sample_rate) + " Hz"));
+                captured->ChannelsText().Text(UiText(L"Channels: ", L"채널: ") + AToW(std::to_string(info.channels)));
 
                 if (info.source_sample_rate > 0) {
                     std::string src = std::to_string(info.source_sample_rate) + " Hz, "
                                     + std::to_string(info.source_channels) + " ch, "
                                     + std::to_string(info.source_bit_depth) + " bit";
-                    captured->SourceInfoText().Text(L"Source: " + AToW(src));
+                    captured->SourceInfoText().Text(UiText(L"Source: ", L"소스: ") + AToW(src));
                 }
                 /* Faz 1: explain what the numbers mean, not just show them. */
                 std::string hint;
@@ -426,10 +504,9 @@ namespace winrt::A2DPWBWinUI::implementation
 
         // Auto-connect (plan section 3): resume the last device at launch
         if (settings_.auto_connect_on_start && !settings_.last_device_mac.empty()) {
-            auto st = detect_dongle_driver(0x2357, 0x0604);
-            if (st.mode != DongleDriverMode::WinUsbStream) {
+            if (!adapter_ready) {
                 AppendLog(LogTag::Warn, "Auto-connect skipped: dongle is not in WinUSB (Streaming) mode. "
-                          "Click 'Enable Streaming (WinUSB)' in the Streaming Mode panel.");
+                          "See the WinUSB setup instructions in Troubleshooting.");
             } else {
                 AppendLog("Auto-connecting to last device " + settings_.last_device_name +
                           " [" + settings_.last_device_mac + "]...");
@@ -744,8 +821,8 @@ namespace winrt::A2DPWBWinUI::implementation
             if (StatsFreshnessText()) UpdateFreshness();
             if (DeviceCapsText()) UpdateDeviceCaps();
         }
-        ConnectButton().Content(winrt::box_value(streaming ? L"Disconnect" : L"Connect"));
-        DirectConnectButton().Content(winrt::box_value(streaming ? L"Disconnect" : L"Direct Connect"));
+        ConnectButton().Content(winrt::box_value(streaming ? UiText(L"Disconnect", L"연결 끊기") : UiText(L"Connect", L"연결")));
+        DirectConnectButton().Content(winrt::box_value(streaming ? UiText(L"Disconnect", L"연결 끊기") : UiText(L"Direct Connect", L"주소로 연결")));
     }
 
     void MainWindow::StopStream()
@@ -798,7 +875,7 @@ namespace winrt::A2DPWBWinUI::implementation
     void MainWindow::ShowSetupGuide()
     {
         auto dialog = ContentDialog();
-        dialog.Title(winrt::box_value(L"Setup & Help"));
+        dialog.Title(winrt::box_value(UiText(L"Setup & Help", L"설정 및 도움말")));
 
         auto scroll = ScrollViewer();
         scroll.MaxHeight(520);
@@ -821,95 +898,95 @@ namespace winrt::A2DPWBWinUI::implementation
             return tb;
         };
 
-        stack.Children().Append(heading(L"How streaming works"));
-        stack.Children().Append(para(L"SSC On Windows streams Windows audio over a USB Bluetooth dongle "
-                                     L"(TP-Link UB500 / Realtek RTL8761B) with BTstack in USB (WinUSB) mode. "
-                                     L"This bypasses the Windows Bluetooth stack entirely."));
-        stack.Children().Append(para(L"Windows Bluetooth is NOT active while the dongle is in Streaming mode. "
-                                     L"Use the two buttons in the 'Streaming Mode (Dongle)' panel to switch."));
+        if (IsKorean()) {
+            stack.Children().Append(heading(L"설치 및 페어링"));
+            stack.Children().Append(para(L"Secure Boot를 켠 상태에서 지원 동글용 서명된 WinUSB 드라이버를 사용하세요. "
+                                         L"A760은 문제 해결 메뉴에서 감지와 HCI 진단을 할 수 있습니다."));
+            stack.Children().Append(para(L"헤드셋을 페어링 모드로 전환한 뒤 ‘장치 검색’을 누르세요. "
+                                         L"목록에서 헤드셋과 코덱을 선택하고 ‘연결’을 누르세요."));
+            stack.Children().Append(heading(L"Windows Bluetooth 복원"));
+            stack.Children().Append(para(L"스트리밍을 중지하고 문제 해결 메뉴에서 ‘Windows Bluetooth 복원 안내’를 여세요. "
+                                         L"자세한 절차는 배포 ZIP의 setup-ko.md를 참조하세요."));
+        } else {
+            stack.Children().Append(heading(L"How streaming works"));
+            stack.Children().Append(para(L"SSC On Windows streams Windows audio over a USB Bluetooth dongle "
+                                         L"(TP-Link UB500 / Realtek RTL8761B) with BTstack in USB (WinUSB) mode. "
+                                         L"This bypasses the Windows Bluetooth stack entirely."));
+            stack.Children().Append(para(L"With WinUSB active, this dongle is dedicated to SSC On Windows. "
+                                         L"The Troubleshooting panel provides Device Manager instructions."));
 
-        stack.Children().Append(heading(L"First-time setup"));
-        stack.Children().Append(para(L"1) Connect the dongle. If Windows shows it as a Bluetooth adapter "
-                                     L"(BTHUSB), click 'Enable Streaming (WinUSB)' and approve the UAC prompt."));
-        stack.Children().Append(para(L"2) Put the Buds3 FE into pairing mode (hold both earbuds until the LED blinks)."));
-        stack.Children().Append(para(L"3) Click 'Scan Devices' (about 8 s), then select your buds in the list."));
-        stack.Children().Append(para(L"4) Pick a codec (SSC recommended for Buds3 FE; AAC/SBC fall back if unsupported) and click 'Connect'."));
-        stack.Children().Append(para(L"5) Optional: tick 'Auto-connect last device on start' to resume streaming at launch."));
+            stack.Children().Append(heading(L"First-time setup"));
+            stack.Children().Append(para(L"1) Connect the dongle. If Windows shows it as a Bluetooth adapter "
+                                         L"(BTHUSB), use a trusted signed WinUSB package for that device."));
+            stack.Children().Append(para(L"2) Put the Buds3 FE into pairing mode (hold both earbuds until the LED blinks)."));
+            stack.Children().Append(para(L"3) Click 'Scan Devices' (about 8 s), then select your buds in the list."));
+            stack.Children().Append(para(L"4) Pick a codec (SSC recommended for Buds3 FE; AAC/SBC fall back if unsupported) and click 'Connect'."));
+            stack.Children().Append(para(L"5) Optional: tick 'Auto-connect last device on start' to resume streaming at launch."));
 
-        stack.Children().Append(heading(L"Troubleshooting / FAQ"));
-        stack.Children().Append(para(L"Q: No sound?  A: Verify the dongle state shows 'WinUSB (Streaming mode)' and a source "
-                                     L"is playing. Windows output volume does not change the captured mix."));
-        stack.Children().Append(para(L"Q: Reconnect fails?  A: 'Reconnect Last' reuses the saved link key. If the buds were "
-                                     L"reset, delete %APPDATA%\\A2DPWB\\profiles.json so a fresh pair happens."));
-        stack.Children().Append(para(L"Q: SSC bitrate?  A: 48 kHz High 229 / Standard 192 / Mobile 128 kbps; "
-                                     L"'96k UHQ' upsamples to 96 kHz (250 / 442 / 584 kbps). Note: UHQ needs "
-                                     L"the device to advertise the SSC UHQ capability bit - if it does not "
-                                     L"(e.g. Buds3 FE), the app falls back to 48 kHz."));
-        stack.Children().Append(para(L"Q: Back to normal Windows Bluetooth?  A: Click 'Restore Windows BT (BTHUSB)' "
-                                     L"in the Streaming Mode panel (same PnP automation, no manual Zadig/Device Manager)."));
+            stack.Children().Append(heading(L"Troubleshooting / FAQ"));
+            stack.Children().Append(para(L"Q: No sound?  A: Verify the dongle state shows 'WinUSB (Streaming mode)' and a source "
+                                         L"is playing. Windows output volume does not change the captured mix."));
+            stack.Children().Append(para(L"Q: Reconnect fails?  A: 'Reconnect Last' reuses the saved link key. If the buds were "
+                                         L"reset, delete %APPDATA%\\A2DPWB\\profiles.json so a fresh pair happens."));
+            stack.Children().Append(para(L"Q: SSC bitrate?  A: 48 kHz High 229 / Standard 192 / Mobile 128 kbps; "
+                                         L"'96k UHQ' upsamples to 96 kHz (250 / 442 / 584 kbps). Note: UHQ needs "
+                                         L"the device to advertise the SSC UHQ capability bit - if it does not "
+                                         L"(e.g. Buds3 FE), the app falls back to 48 kHz."));
+            stack.Children().Append(para(L"Q: Back to normal Windows Bluetooth?  A: Open the restore instructions "
+                                         L"under Troubleshooting and follow them in Device Manager."));
+        }
 
         scroll.Content(stack);
         dialog.Content(scroll);
-        dialog.PrimaryButtonText(L"Close");
+        dialog.PrimaryButtonText(UiText(L"Close", L"닫기"));
         dialog.XamlRoot(this->Content().XamlRoot());
         dialog.ShowAsync();
     }
 
-    void MainWindow::RunDriverSwitch(bool enable_winusb)
+    void MainWindow::ShowDriverInstructions(bool enable_winusb)
     {
-        if (driverBusy_) return;
         if (isStreaming_) {
             AppendLog(LogTag::Warn, "Stop streaming before switching the dongle driver.");
             return;
         }
 
-        driverBusy_ = true;
-        EnableStreamingButton().IsEnabled(false);
-        RestoreBtButton().IsEnabled(false);
-        AppendLog(enable_winusb ? "Switching dongle to WinUSB (Streaming)... a UAC prompt will appear."
-                                : "Restoring dongle to BTHUSB (Windows Bluetooth)... a UAC prompt will appear.");
+        const auto adapter = FindRtl8761Adapter();
+        const auto report = adapter
+            ? get_dongle_driver_instructions(adapter->vid, adapter->pid, enable_winusb)
+            : DongleSwitchReport{DongleSwitchResult::NotPresent,
+                  "Connect one supported RTL8761BU adapter to identify the device. For other models, check the hardware ID and driver in Device Manager."};
 
-        std::thread([this, enable_winusb]() {
-            auto rep = set_dongle_winusb(0x2357, 0x0604, enable_winusb);
-            dispatcher_.TryEnqueue([this, rep, enable_winusb]() {
-                driverBusy_ = false;
-                const char* action = enable_winusb ? "Enable Streaming" : "Restore Windows BT";
-                switch (rep.result) {
-                case DongleSwitchResult::Ok:
-                case DongleSwitchResult::NoChange:
-                    AppendLog(LogTag::Ok, std::string(action) + ": " + rep.message);
-                    break;
-                default:
-                    AppendLog(LogTag::Error, std::string(action) + " failed: " + rep.message);
-                    break;
-                }
-                RefreshDriverMode();
-                EnableStreamingButton().IsEnabled(true);
-                RestoreBtButton().IsEnabled(true);
-            });
-        }).detach();
+        ContentDialog dialog;
+        dialog.Title(box_value(enable_winusb ? UiText(L"WinUSB Setup", L"WinUSB 설정") : UiText(L"Windows Bluetooth Restore", L"Windows Bluetooth 복원")));
+        TextBlock instructions;
+        instructions.Text(AToW(report.message));
+        instructions.TextWrapping(TextWrapping::Wrap);
+        dialog.Content(instructions);
+        dialog.CloseButtonText(UiText(L"Close", L"닫기"));
+        dialog.XamlRoot(this->Content().XamlRoot());
+        dialog.ShowAsync();
     }
 
     void MainWindow::OnEnableStreamingClick(IInspectable const&, RoutedEventArgs const&)
     {
-        RunDriverSwitch(true);
+        ShowDriverInstructions(true);
     }
 
     void MainWindow::OnRestoreBtClick(IInspectable const&, RoutedEventArgs const&)
     {
-        RunDriverSwitch(false);
+        ShowDriverInstructions(false);
     }
 
     void MainWindow::UpdateStats(const A2dpService::StreamStats& stats)
     {
         char buf[128];
-        snprintf(buf, sizeof(buf), "Latency: %.2f ms", stats.latency_ms);
+        snprintf(buf, sizeof(buf), UiText("Latency: %.2f ms", "지연 시간: %.2f ms"), stats.latency_ms);
         LatencyText().Text(AToW(buf));
-        snprintf(buf, sizeof(buf), "Error Rate: %.2f%%", stats.error_rate * 100.0);
+        snprintf(buf, sizeof(buf), UiText("Error Rate: %.2f%%", "오류율: %.2f%%"), stats.error_rate * 100.0);
         ErrorRateText().Text(AToW(buf));
-        snprintf(buf, sizeof(buf), "Loss Rate: %.2f%%", stats.loss_rate * 100.0);
+        snprintf(buf, sizeof(buf), UiText("Loss Rate: %.2f%%", "손실률: %.2f%%"), stats.loss_rate * 100.0);
         LossRateText().Text(AToW(buf));
-        snprintf(buf, sizeof(buf), "Queue: %u  (sends=%llu fails=%llu)", stats.queue_depth,
+        snprintf(buf, sizeof(buf), UiText("Queue: %u  (sends=%llu fails=%llu)", "대기열: %u (전송=%llu 실패=%llu)"), stats.queue_depth,
                  (unsigned long long)stats.total_sends, (unsigned long long)stats.send_fails);
         QueueText().Text(AToW(buf));
 
@@ -930,15 +1007,15 @@ namespace winrt::A2DPWBWinUI::implementation
          * encode round-trip above that can no longer keep up.
          * docs/dev/PLAN_UX_DESIGN.md Faz 2: a short health word beside the
          * values, never a bare number. */
-        const char* verdict = "Good";
+        const char* verdict = UiText("Good", "양호");
         LogTag tone = LogTag::Ok;
         if (stats.latency_ms > 18.0 || stats.error_rate >= 0.05 ||
             stats.loss_rate >= 0.02 || stats.queue_depth >= 32) {
-            verdict = "Poor";
+            verdict = UiText("Poor", "불량");
             tone = LogTag::Error;
         } else if (stats.latency_ms > 10.0 || stats.error_rate >= 0.01 ||
                    stats.loss_rate >= 0.005 || stats.queue_depth >= 8) {
-            verdict = "Fair";
+            verdict = UiText("Fair", "보통");
             tone = LogTag::Warn;
         }
         std::string health(verdict);
@@ -988,7 +1065,7 @@ namespace winrt::A2DPWBWinUI::implementation
     {
         if (!StatsFreshnessText()) return;
         if (!stats_are_fresh_) {
-            StatsFreshnessText().Text(L"no stream - statistics are not being collected");
+            StatsFreshnessText().Text(UiText(L"no stream - statistics are not being collected", L"스트림이 없어 통계를 수집하지 않습니다"));
             for (auto t : { LatencyText(), ErrorRateText(), LossRateText(), QueueText() }) {
                 if (t) t.Opacity(0.45);
             }
@@ -996,13 +1073,13 @@ namespace winrt::A2DPWBWinUI::implementation
         }
         uint64_t age_ms = GetTickCount64() - last_stats_tick_;
         char buf[64];
-        snprintf(buf, sizeof(buf), "updated %.1f s ago", age_ms / 1000.0);
+        snprintf(buf, sizeof(buf), UiText("updated %.1f s ago", "%.1f초 전에 업데이트"), age_ms / 1000.0);
         StatsFreshnessText().Text(AToW(buf));
         const bool stale = age_ms > 6000;
         for (auto t : { LatencyText(), ErrorRateText(), LossRateText(), QueueText() }) {
             if (t) t.Opacity(stale ? 0.45 : 1.0);
         }
-        if (stale) StatsFreshnessText().Text(L"last update over 6 s ago - values may be stale");
+        if (stale) StatsFreshnessText().Text(UiText(L"last update over 6 s ago - values may be stale", L"마지막 업데이트 후 6초 이상 지났습니다"));
     }
 
     /* Plan Faz 2: show what the headset really advertises. Nothing is inferred;
@@ -1012,7 +1089,7 @@ namespace winrt::A2DPWBWinUI::implementation
     {
         auto caps = service_ ? service_->get_device_caps() : A2dpService::DeviceCaps{};
         if (!caps.known) {
-            DeviceCapsText().Text(L"Not known until connected.");
+            DeviceCapsText().Text(UiText(L"Not known until connected.", L"장치를 연결하면 확인할 수 있습니다."));
             return;
         }
         std::string list;
@@ -1143,7 +1220,7 @@ namespace winrt::A2DPWBWinUI::implementation
         StatusDetailText().Text(AToW(copy.detail));
 
         if (copy.action && copy.action[0]) {
-            StatusActionText().Text(AToW(std::string("Next: ") + copy.action));
+            StatusActionText().Text(AToW(std::string(UiText("Next: ", "다음 단계: ")) + copy.action));
             StatusActionText().Visibility(Visibility::Visible);
         } else {
             StatusActionText().Text(L"");
@@ -1176,12 +1253,37 @@ namespace winrt::A2DPWBWinUI::implementation
         if (!panel) return;
         const bool collapsed = panel.Visibility() == Visibility::Collapsed;
         panel.Visibility(collapsed ? Visibility::Visible : Visibility::Collapsed);
-        LogToggleButton().Content(winrt::box_value(collapsed ? L"Hide log" : L"Show log"));
+        LogToggleButton().Content(winrt::box_value(collapsed ? UiText(L"Hide log", L"로그 숨기기") : UiText(L"Show log", L"로그 표시")));
         if (collapsed) {
             dispatcher_.TryEnqueue([this] {
                 auto scrollable = LogScroller().ScrollableHeight();
                 LogScroller().ScrollToVerticalOffset(scrollable);
             });
+        }
+    }
+
+    void MainWindow::OnA760DiagnosticsClick(IInspectable const&, RoutedEventArgs const&)
+    {
+        RunA760Diagnostics();
+    }
+
+    winrt::fire_and_forget MainWindow::RunA760Diagnostics()
+    {
+        auto weak = get_weak();
+        const bool korean = IsKorean();
+        A760DiagnosticsButton().IsEnabled(false);
+        winrt::apartment_context ui;
+        co_await winrt::resume_background();
+        std::string result;
+        try {
+            result = diagnose_a760(korean);
+        } catch (...) {
+            result = korean ? "A760 진단 중 오류가 발생했습니다." : "A760 diagnostics failed.";
+        }
+        co_await ui;
+        if (auto self = weak.get()) {
+            self->A760DiagnosticsButton().IsEnabled(true);
+            self->A760DiagnosticsResult().Text(AToW(result));
         }
     }
 
@@ -1192,31 +1294,36 @@ namespace winrt::A2DPWBWinUI::implementation
 
     void MainWindow::RefreshDriverMode()
     {
-        // TP-Link UB500: VID 0x2357, PID 0x0604 (Realtek RTL8761BU)
-        auto st = detect_dongle_driver(0x2357, 0x0604);
+        const auto adapter = FindRtl8761Adapter();
+        const auto st = adapter ? adapter->status : DongleDriverStatus{};
 
         std::wstring state;
         std::string detail;
         switch (st.mode) {
         case DongleDriverMode::WinUsbStream:
-            state = L"WinUSB (Streaming mode)";
-            detail = "Service: " + st.service + " | Device: " + st.device_name;
+            state = UiText(L"WinUSB (Streaming mode)", L"WinUSB (스트리밍 모드)");
+            detail = std::string(UiText("Service: ", "서비스: ")) + st.service + UiText(" | Device: ", " | 장치: ") + st.device_name;
             break;
         case DongleDriverMode::BthUsb:
             state = L"BTHUSB (Windows Bluetooth)";
-            detail = "Service: " + st.service + " | Device: " + st.device_name;
+            detail = std::string(UiText("Service: ", "서비스: ")) + st.service + UiText(" | Device: ", " | 장치: ") + st.device_name;
             break;
         case DongleDriverMode::Other:
-            state = L"Other driver";
-            detail = "Service: " + st.service + " | Device: " + st.device_name;
+            state = UiText(L"Other driver", L"기타 드라이버");
+            detail = std::string(UiText("Service: ", "서비스: ")) + st.service + UiText(" | Device: ", " | 장치: ") + st.device_name;
             break;
         case DongleDriverMode::NotPresent:
         default:
-            state = L"Not detected";
-            detail = "No UB500 (VID 0x2357/PID 0x0604) device node found.";
+            state = UiText(L"No single supported dongle detected", L"지원 동글 한 대를 감지하지 못했습니다");
+            detail = UiText("Connect one RTL8761BU (2357:0604 or 0BDA:8771). Check other hardware IDs in Device Manager.", "RTL8761BU(2357:0604 또는 0BDA:8771) 한 대를 연결하세요. 기타 하드웨어 ID는 장치 관리자에서 확인하세요.");
             break;
         }
 
+        const auto a760 = detect_dongle_driver(A760_VID, A760_PID);
+        if (a760.mode != DongleDriverMode::NotPresent) {
+            detail += UiText("\nA760 detected. Use A760 HCI diagnostics.",
+                             "\nA760을 감지했습니다. A760 HCI 진단을 사용하세요.");
+        }
         DriverStateText().Text(state);
         DriverDetailText().Text(AToW(detail));
         AppendLog(LogTag::Data, "[DriverMode] " + detail);

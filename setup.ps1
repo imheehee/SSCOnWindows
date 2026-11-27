@@ -43,7 +43,7 @@ param(
     [switch]$ForceWslConfig,
     [switch]$Quiet,
     [string]$BlobFrom = '',
-    [string]$Repo = 'C:\Projects\SSCOnWindows'
+    [string]$Repo = $PSScriptRoot
 )
 
 $ErrorActionPreference = 'Stop'
@@ -349,8 +349,7 @@ if (-not $dev) {
     } else {
         Log "  Service: '$($dev.Service)' -> Windows BT mode; SSC streaming requires WinUSB."
         Log "  Fix (choose one):"
-        Log "    A) Open the GUI -> 'Enable Streaming (WinUSB)' button (auto-elevated, generates a signed INF)."
-        Log "    B) Manual: Zadig -> replace driver for USB\VID_2357&PID_0604 with WinUSB."
+        Log "    Install a trusted signed WinUSB package for the dedicated dongle in Device Manager."
         Log "  After switching, replug the dongle (or use the in-app toggle which re-evaluates the devnode)."
     }
     if ($dev.PNPDeviceID -match 'VID_2357&PID_0604') {

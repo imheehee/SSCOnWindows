@@ -22,21 +22,14 @@ audio to Bluetooth headphones over **Samsung Scalable Codec (SSC)**, **AAC**, or
 **SBC**, without a kernel driver. Windows natively supports only SBC and AAC for
 A2DP; this project adds SSC on top of the same user-mode transport.
 
-Uses **BTstack + WinUSB** — entirely user-mode, no driver signing needed. The
-Windows Bluetooth stack is not involved in streaming.
+Uses **BTstack + WinUSB**. Windows requires an accepted signed driver package to bind WinUSB to the dedicated USB adapter. The application streams through BTstack in user mode.
 
 ## Transport: BTstack + WinUSB
 
 A dedicated USB Bluetooth adapter is switched from the Microsoft Bluetooth driver
-(`BTHUSB`) to a generic **WinUSB** driver (an in-app toggle generates, signs and
-installs a minimal WinUSB INF; no Zadig required). BTstack then implements HCI,
-L2CAP, AVDTP, A2DP and AVRCP in user mode.
-
-**Advantages**:
-- No driver signing cost (an in-app self-signed WinUSB INF + catalog is used)
-- No test signing mode required
-- No Secure Boot disabling
-- All code runs in user-mode (easier debugging)
+(`BTHUSB`) to **WinUSB** with a trusted signed package in Device Manager.
+BTstack then implements HCI, L2CAP, AVDTP, A2DP and AVRCP in user mode.
+Secure Boot and normal Windows driver signature enforcement stay enabled.
 
 **Trade-offs**:
 - Requires a dedicated USB Bluetooth adapter (separate from Windows' built-in
@@ -46,7 +39,7 @@ L2CAP, AVDTP, A2DP and AVRCP in user mode.
   device list
 
 **How it works**:
-1. The user toggles the dongle to WinUSB from the app (driver switch)
+1. The user binds a trusted signed WinUSB driver to the dedicated USB dongle in Device Manager
 2. BTstack opens the USB device via the WinUSB API
 3. BTstack sends HCI commands to initialize the controller
 4. (Realtek adapters) Firmware is uploaded if needed
@@ -60,12 +53,12 @@ L2CAP, AVDTP, A2DP and AVRCP in user mode.
 SSCOnWindows.exe (WinUI 3)  /  SSCOnWindows-0.2.0.exe (CLI)
 ├── WinUI Layer (winui3/, C++/WinRT)
 │   ├── App / MainWindow     Scan, connect, codec/quality/rate, volume, stats, log
-│   ├── Streaming Mode panel WinUSB / BTHUSB driver toggle
+│   ├── Troubleshooting panel WinUSB / BTHUSB status and instructions
 │   └── Setup & Help         Pairing guide + FAQ
 │
 ├── Legacy GUI Layer (wxWidgets)
 │   ├── wx_app / wx_main_frame / wx_profile_dialog
-│   └── wx_about_dialog / localization (en, ja — embedded JSON)
+│   └── wx_about_dialog / localization (en, ja, ko — embedded JSON)
 │
 ├── Core Layer (a2dpwb_core, shared by CLI + WinUI)
 │   ├── a2dp_service        A2DP connection lifecycle & state machine
@@ -80,7 +73,7 @@ SSCOnWindows.exe (WinUI 3)  /  SSCOnWindows-0.2.0.exe (CLI)
 │   │   └── ssc_daemon_backend TCP daemon backend (blob via WSL2/Qiling) + watchdog
 │   ├── resampler           2x SRC for SSC UHQ (96 kHz)
 │   ├── driver_mode         Dongle driver-mode detection (WinUSB vs BTHUSB)
-│   ├── driver_switch       WinUSB INF generation + signing + install/remove
+│   ├── driver_switch       WinUSB setup and Windows Bluetooth restoration instructions
 │   ├── bt_adapter_enum     USB Bluetooth adapter enumeration (WinUSB)
 │   ├── audio_device_enum   WASAPI audio device enumeration
 │   └── profile_manager     Connection profile persistence (JSON)
@@ -112,7 +105,7 @@ The pipeline is multi-threaded. Each thread is created once per stream/run:
 
 | Thread | Owner | Created in | Responsibility |
 |--------|-------|-----------|----------------|
-| **UI thread(s)** | WinUI 3 (C++/WinRT) or wx (legacy) | — | Window, controls, `State/StreamInfo/Stats` callbacks (dispatcher-enqueued), driver toggle triggers a worker |
+| **UI thread(s)** | WinUI 3 (C++/WinRT) or wx (legacy) | — | Window, controls, `State/StreamInfo/Stats` callbacks (dispatcher-enqueued), driver status is queried through SetupAPI |
 | **BTstack run loop** | `btstack_transport.cpp` | `BtStackTransport::init` (`CreateThread`) | Owns the BTstack event loop: HCI, L2CAP, AVDTP, A2DP, AVRCP. All cross-thread BTstack calls are marshalled with `btstack_run_loop_execute_on_main_thread()` into synchronous wrappers that signal an event |
 | **WASAPI capture** | `wasapi_capture.cpp` | `WasapiCapture::start` (`CreateThread`) | COM (MTA per-thread), MMCSS `"Audio"` class, 1 ms timer resolution. Pumps `IAudioCaptureClient`, converts float32 → i32 (2^29 SSC / 2^31 otherwise), downmixes, and pushes PCM frames into the encode queue via the callback |
 | **Streaming worker** | `a2dp_service.cpp` | `A2dpService::start_streaming` (`std::thread`) | `streaming_thread_func`: connect, spawn the encode thread, supervise the main loop, auto-reconnect (≤ 10 attempts). Wrapped in a SEH guard (`seh_call`) so a BTstack crash becomes `State::Error` instead of a hang |
@@ -279,7 +272,7 @@ AAC and SBC use standard A2DP codec IDs defined in the A2DP specification.
 | Failure | Detection (diagnostic) | Recovery |
 |---------|------------------------|----------|
 | HCI init timeout | `BTstack: HCI initialization timed out` | `init()` fails; caller shows error |
-| Dongle not in WinUSB | driver-mode panel shows `BTHUSB` | auto-connect is skipped with a log hint; user toggles via the panel |
+| Dongle not in WinUSB | driver-mode panel shows `BTHUSB` | auto-connect is skipped with a log hint; the panel shows Device Manager instructions |
 | Daemon down / TCP failure | `SSC: daemon lost, restarting (recovery #N)...` | `SscEncoder::recover()` watchdog: closes socket, re-spawns daemon (5 s cooldown), reconnects |
 | Encode transport inconsistency | `SSC: enc… ret=0` / short reads | socket marked `connected_=false` → watchdog path |
 | A2DP connection loss | `BTstack: Connection lost — ready for reconnect` | capture paused; auto-reconnect ≤ 10 attempts, then `State::Error` (CLI exits) |
@@ -287,7 +280,7 @@ AAC and SBC use standard A2DP codec IDs defined in the A2DP specification.
 | UHQ request on 48k-only sink | `cap=0x3C` (no `0x02`), status toast | fall back to 48 kHz SSC + warn (silent audio otherwise) |
 | Invalid bitrate request | snapped value logged | `snap_bitrate_bps` keeps the blob in its supported set (malformed frames otherwise) |
 | Capture overrun/latency | `CAP: rate` < 48000, `queue/fail > 0` | encoder round-trip too slow → reduce load (see timing budgets) |
-| Driver toggle while streaming | blocked | `RunDriverSwitch` refuses while `running` |
+| Driver change guidance while streaming | ask the user to stop | The WinUI panel asks the user to stop streaming before changing drivers in Device Manager. |
 
 **Diagnostics invariants** (stderr, ~2 s cadence; golden-tested)
 - `CAP: rate=48000fs queue≈0 fail≈0`

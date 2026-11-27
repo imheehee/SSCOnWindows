@@ -27,7 +27,7 @@ set(wxBUILD_COMPATIBILITY "3.0" CACHE STRING "" FORCE)
 FetchContent_MakeAvailable(wxWidgets)
 
 # --- Embed language files at configure time (needed by core localization) ---
-file(GLOB LANG_FILES "${CMAKE_CURRENT_SOURCE_DIR}/lang/*.json")
+file(GLOB LANG_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/lang/*.json")
 set(EMBEDDED_LANG_ENTRIES "")
 foreach(LANG_FILE ${LANG_FILES})
     get_filename_component(LANG_CODE ${LANG_FILE} NAME_WE)
@@ -54,6 +54,7 @@ add_library(a2dpwb_core STATIC
     src/ssc_encoder.cpp
     src/ssc_daemon_backend.cpp
     src/bt_device.cpp
+    src/a760_diagnostics.cpp
     src/bt_adapter_enum.cpp
     src/audio_device_enum.cpp
     src/btstack_link_key_db_file.c

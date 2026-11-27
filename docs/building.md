@@ -42,7 +42,7 @@ Build the core library first, then the MSBuild project:
 ```powershell
 cmake --build build_msvc --config Release --target a2dpwb_core -j 8
 $msb = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -find "MSBuild\**\Bin\MSBuild.exe"
-& $msb winui3\A2DPWBWinUI.vcxproj -p:Configuration=Release -p:Platform=x64 -m:8 -t:Build
+& $msb winui3\A2DPWBWinUI.vcxproj -restore -p:Configuration=Release -p:Platform=x64 -p:PlatformToolset=v143 -m:8 -t:Build
 ```
 
 Output: `winui3\bin\x64\Release\SSCOnWindows.exe`. The app is **unpackaged**, so the

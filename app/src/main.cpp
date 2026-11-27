@@ -36,6 +36,7 @@
 #include "bt_device.h"
 #include "btstack_transport.h"
 #include "bt_adapter_enum.h"
+#include "a760_diagnostics.h"
 #include "config_path.h"
 #include "resampler.h"
 #include "console_style.h"
@@ -466,6 +467,7 @@ static void print_usage(const char *prog) {
     printf("Usage: %s [options]\n", prog);
     printf("\nModes:\n");
     printf("  (default)    Launch GUI application\n");
+    printf("  --diagnose-a760  Report A760 driver and read HCI version with existing WinUSB\n");
     printf("  --cli        Run in command-line mode\n");
     printf("\nOptions (CLI mode):\n");
     printf("  -c <codec>   Codec: ssc, aac, sbc (default: ssc)\n");
@@ -873,6 +875,10 @@ int main(int argc, char *argv[]) {
     bool start_minimized = false;
     bool no_color = false;
     for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--diagnose-a760") == 0) {
+            puts(diagnose_a760().c_str());
+            return 0;
+        }
         if (strcmp(argv[i], "--cli") == 0) {
             cli_mode = true;
         } else if (strcmp(argv[i], "--minimized") == 0) {

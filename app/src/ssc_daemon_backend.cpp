@@ -9,6 +9,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <chrono>
@@ -23,24 +25,16 @@
 namespace {
 
 constexpr int kDaemonPort = 20248;
-constexpr const char *kDaemonScript =
-    "/home/kaan5/ssc/bin/start_sscblobd";
 constexpr uint32_t kFrameSamples = 864;
 constexpr uint32_t kMaxEncodeBytes = 4096;
 /* Wire-protocol magic (LE bytes 'S''H''C''D') the client sends as the
  * frame_samples header to make the daemon exit cleanly. */
 constexpr uint32_t kCmdShutdown = 0x44434853u;
 
-std::string trim(const std::string &s) {
-    size_t a = s.find_first_not_of(" \t\r\n");
-    if (a == std::string::npos) return "";
-    size_t b = s.find_last_not_of(" \t\r\n");
-    return s.substr(a, b - a + 1);
-}
-
 } // namespace
 
-DaemonSscBackend::DaemonSscBackend(bool native) : native_(native) {}
+DaemonSscBackend::DaemonSscBackend(bool native)
+    : native_(native) {}
 
 DaemonSscBackend::~DaemonSscBackend() {
     shutdown();
@@ -49,7 +43,14 @@ DaemonSscBackend::~DaemonSscBackend() {
 std::string DaemonSscBackend::run_wsl(const std::string &args) {
     std::string out;
 #ifdef _WIN32
-    std::string cmdline = "-d Ubuntu -- " + args;
+    std::string cmdline = "wsl.exe ";
+    const char *distro = std::getenv("SSC_WSL_DISTRO");
+    if (distro && *distro) {
+        const std::string name(distro);
+        if (name.find_first_of("\"\\\r\n") != std::string::npos) return {};
+        cmdline += "--distribution \"" + name + "\" ";
+    }
+    cmdline += "--exec " + args;
 
     SECURITY_ATTRIBUTES sa{};
     sa.nLength = sizeof(sa);
@@ -70,10 +71,7 @@ std::string DaemonSscBackend::run_wsl(const std::string &args) {
     si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
 
     PROCESS_INFORMATION pi{};
-    char cmdline_buf[1024];
-    snprintf(cmdline_buf, sizeof(cmdline_buf), "wsl.exe %s", cmdline.c_str());
-
-    BOOL ok = CreateProcessA(nullptr, cmdline_buf, nullptr, nullptr, TRUE,
+    BOOL ok = CreateProcessA(nullptr, cmdline.data(), nullptr, nullptr, TRUE,
                              CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
     CloseHandle(hWrite);
     if (!ok) {
@@ -87,9 +85,15 @@ std::string DaemonSscBackend::run_wsl(const std::string &args) {
         out.append(buf, nread);
     }
     CloseHandle(hRead);
-    WaitForSingleObject(pi.hProcess, 15000);
+    const DWORD wait = WaitForSingleObject(pi.hProcess, 15000);
+    DWORD exit_code = 1;
+    if (wait == WAIT_OBJECT_0) GetExitCodeProcess(pi.hProcess, &exit_code);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
+    if (exit_code != 0) {
+        fprintf(stderr, "SSC: WSL command failed: %s\n", out.c_str());
+        return {};
+    }
 #endif
     return out;
 }
@@ -116,12 +120,22 @@ bool DaemonSscBackend::start_daemon() {
     } else {
         /* Restart the WSL2 daemon with our parameters (kills any prior instance). */
         char daemon_cmd[256];
-        snprintf(daemon_cmd, sizeof(daemon_cmd), "bash -lc '%s %d %u %u %u'",
-                 kDaemonScript, kDaemonPort, sample_rate_, channels_, bitrate_bps_);
-        run_wsl(daemon_cmd);
+        snprintf(daemon_cmd, sizeof(daemon_cmd),
+                 "bash -c \"exec ~/ssc/bin/start_sscblobd %d %u %u %u\"",
+                 kDaemonPort, sample_rate_, channels_, bitrate_bps_);
+        if (run_wsl(daemon_cmd).empty()) {
+            fprintf(stderr, "SSC: WSL daemon startup failed; run setup.ps1 for the selected distribution.\n");
+            return false;
+        }
 
-        /* Grab the WSL2 IP */
-        ip = trim(run_wsl("bash -lc 'hostname -I'"));
+        std::istringstream addresses(run_wsl("hostname -I"));
+        for (std::string address; addresses >> address;) {
+            in_addr parsed{};
+            if (inet_pton(AF_INET, address.c_str(), &parsed) == 1) {
+                ip = address;
+                break;
+            }
+        }
         if (ip.empty()) {
             fprintf(stderr, "SSC: could not resolve WSL2 IP\n");
             return false;
@@ -180,10 +194,10 @@ bool DaemonSscBackend::start_native_daemon() {
     }
 
     std::string cmdline = "py -3.14 -u \"" + script + "\" " +
-        std::to_string(kDaemonPort) + " " +
-        std::to_string(sample_rate_) + " " +
-        std::to_string(channels_) + " " +
-        std::to_string(bitrate_bps_);
+                          std::to_string(kDaemonPort) + " " +
+                          std::to_string(sample_rate_) + " " +
+                          std::to_string(channels_) + " " +
+                          std::to_string(bitrate_bps_);
 
     /* CREATE_NO_WINDOW + STARTF_USESHOWWINDOW/SW_HIDE: no console pops up. */
     STARTUPINFOA si{};
@@ -266,8 +280,7 @@ bool DaemonSscBackend::encode(const int32_t *pcm, size_t frames, size_t channels
     *out_size = 0;
     if (!connected() || !pcm) return false;
 
-    uint32_t expect_bytes = static_cast<uint32_t>(frames) * static_cast<uint32_t>(channels)
-                            * sizeof(int32_t);
+    uint32_t expect_bytes = static_cast<uint32_t>(frames) * static_cast<uint32_t>(channels) * sizeof(int32_t);
     if (frames == 0 || channels == 0) return false;
 
 #ifdef _WIN32
@@ -307,28 +320,38 @@ bool DaemonSscBackend::encode(const int32_t *pcm, size_t frames, size_t channels
     static DWORD diag_tick = 0;
     diag_count++;
     double t_send = (double)(eq.QuadPart - sq.QuadPart) * 1000.0 / (double)frq.QuadPart;
-    double t_hdr  = (double)(sfq.QuadPart - eq.QuadPart) * 1000.0 / (double)frq.QuadPart;
+    double t_hdr = (double)(sfq.QuadPart - eq.QuadPart) * 1000.0 / (double)frq.QuadPart;
     double t_data = (double)(fq.QuadPart - sfq.QuadPart) * 1000.0 / (double)frq.QuadPart;
-    double t_tot  = (double)(fq.QuadPart - sq.QuadPart) * 1000.0 / (double)frq.QuadPart;
+    double t_tot = (double)(fq.QuadPart - sq.QuadPart) * 1000.0 / (double)frq.QuadPart;
     if (t_tot > max_total) max_total = t_tot;
     if (diag_tick == 0) diag_tick = GetTickCount();
     if (GetTickCount() - diag_tick >= 2000) {
         cstyle::fprint(stderr, cstyle::Tag::Data, "SSC:     ");
         fprintf(stderr, "enc%u t_send=%.2fms t_hdr=%.2fms t_data=%.2fms total=",
                 diag_count, t_send, t_hdr, t_data);
-        if (t_tot > 15.0) cstyle::fprint(stderr, cstyle::Tag::Warn, "%.2fms", t_tot);
-        else fprintf(stderr, "%.2fms", t_tot);
+        if (t_tot > 15.0)
+            cstyle::fprint(stderr, cstyle::Tag::Warn, "%.2fms", t_tot);
+        else
+            fprintf(stderr, "%.2fms", t_tot);
         fprintf(stderr, " max=%.2fms ret=", max_total);
-        if (ret <= 0) cstyle::fprint(stderr, cstyle::Tag::Error, "%d", ret);
-        else fprintf(stderr, "%d", ret);
+        if (ret <= 0)
+            cstyle::fprint(stderr, cstyle::Tag::Error, "%d", ret);
+        else
+            fprintf(stderr, "%d", ret);
         fprintf(stderr, "\n");
-        diag_count = 0; diag_tick = GetTickCount(); max_total = 0.0;
+        diag_count = 0;
+        diag_tick = GetTickCount();
+        max_total = 0.0;
     }
 
     *out_size = static_cast<size_t>(ret);
     return true;
 #else
-    (void)pcm; (void)frames; (void)channels; (void)out; (void)out_cap;
+    (void)pcm;
+    (void)frames;
+    (void)channels;
+    (void)out;
+    (void)out_cap;
     return false;
 #endif
 }

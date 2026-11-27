@@ -16,42 +16,34 @@
 
 #include <cctype>
 #include <cstring>
+#include <cstdio>
 #include <vector>
 
-namespace
-{
-    std::string multi_sz_first(const char *data, DWORD len)
-    {
-        /* First non-empty string of a REG_MULTI_SZ */
-        for (DWORD off = 0; off + 1 < len; ) {
-            const char *s = data + off;
-            size_t n = strnlen(s, len - off);
-            if (n == 0) break;
-            if (n > 0 && _stricmp(s, "ROOT\\*PNP0X01") != 0) {
-                return std::string(s, n);
-            }
-            off += (DWORD)n + 1;
+namespace {
+std::string multi_sz_first(const char *data, DWORD len) {
+    /* First non-empty string of a REG_MULTI_SZ */
+    for (DWORD off = 0; off + 1 < len;) {
+        const char *s = data + off;
+        size_t n = strnlen(s, len - off);
+        if (n == 0) break;
+        if (n > 0 && _stricmp(s, "ROOT\\*PNP0X01") != 0) {
+            return std::string(s, n);
         }
-        return {};
+        off += (DWORD)n + 1;
     }
+    return {};
+}
 
-    /* Case-insensitive substring search on the hardware-ID line. */
-    bool hwid_matches(const char *hwid, uint16_t vid, uint16_t pid)
-    {
-        char needle[32];
-        char hay[128];
-        snprintf(hay, sizeof(hay), "%s", hwid);
-        for (char *p = hay; *p; p++) *p = (char)toupper((unsigned char)*p);
-
-        snprintf(needle, sizeof(needle), "VID_%04X", (unsigned)vid);
-        if (!strstr(hay, needle)) return false;
-        snprintf(needle, sizeof(needle), "PID_%04X", (unsigned)pid);
-        return strstr(hay, needle) != nullptr;
-    }
+bool hwid_matches(const char *hwid, uint16_t vid, uint16_t pid) {
+    char prefix[32];
+    const int length = snprintf(prefix, sizeof(prefix), "USB\\VID_%04X&PID_%04X",
+                                static_cast<unsigned>(vid), static_cast<unsigned>(pid));
+    return _strnicmp(hwid, prefix, length) == 0 &&
+           (hwid[length] == '\0' || hwid[length] == '&');
+}
 } // namespace
 
-DongleDriverStatus detect_dongle_driver(uint16_t vid, uint16_t pid)
-{
+DongleDriverStatus detect_dongle_driver(uint16_t vid, uint16_t pid) {
     DongleDriverStatus st;
 
     HDEVINFO devs = SetupDiGetClassDevsA(nullptr, nullptr, nullptr,
@@ -78,11 +70,19 @@ DongleDriverStatus detect_dongle_driver(uint16_t vid, uint16_t pid)
         if (reg_type != REG_MULTI_SZ) continue;
 
         bool matched = false;
-        for (DWORD off = 0; off + 1 < len; ) {
+        for (DWORD off = 0; off + 1 < len;) {
             const char *s = buf.data() + off;
             size_t n = strnlen(s, len - off);
             if (n == 0) break;
-            if (hwid_matches(s, vid, pid)) { matched = true; break; }
+            if (hwid_matches(s, vid, pid)) {
+                matched = true;
+                const char* revision = std::strstr(s, "&REV_");
+                if (revision && std::strlen(revision + 5) >= 4) {
+                    unsigned value = 0;
+                    if (sscanf_s(revision + 5, "%4x", &value) == 1)
+                        st.usb_revision = static_cast<uint16_t>(value);
+                }
+            }
             off += (DWORD)n + 1;
         }
         if (!matched) continue;
@@ -136,10 +136,8 @@ DongleDriverStatus detect_dongle_driver(uint16_t vid, uint16_t pid)
             st.mode = DongleDriverMode::WinUsbStream;
         } else if (_stricmp(st.service.c_str(), "BTHUSB") == 0) {
             st.mode = DongleDriverMode::BthUsb;
-        } else if (!st.service.empty()) {
-            st.mode = DongleDriverMode::Other;
         } else {
-            st.mode = DongleDriverMode::NotPresent; /* found node w/o service → treat unknown */
+            st.mode = DongleDriverMode::Other;
         }
 
         break;

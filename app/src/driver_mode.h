@@ -13,6 +13,7 @@
 #ifndef DRIVER_MODE_H
 #define DRIVER_MODE_H
 
+#include <cstdint>
 #include <string>
 
 enum class DongleDriverMode {
@@ -24,8 +25,9 @@ enum class DongleDriverMode {
 
 struct DongleDriverStatus {
     DongleDriverMode mode = DongleDriverMode::NotPresent;
-    std::string service;   /* e.g. "WinUSB", "BTHUSB"                 */
+    std::string service;     /* e.g. "WinUSB", "BTHUSB"                 */
     std::string device_name; /* friendly description if available      */
+    uint16_t usb_revision = 0; // bcdDevice from the revision-qualified hardware ID
     std::string instance_id; /* PnP instance path of the devnode       */
 };
 

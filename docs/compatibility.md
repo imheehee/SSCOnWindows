@@ -67,6 +67,20 @@ short or redacted for privacy.
 | WASAPI capture | 48 kHz stereo | loopback is **pre-volume-mix**; UHQ = 2x SRC from 48 kHz (not a true 96 kHz capture) |
 | USB dongles | TP-Link UB500 verified | Intel/CSR dongles expected fine (no firmware upload); Realtek needs `rtl8761*` firmware in `%APPDATA%\A2DPWB` |
 
+## Windows 11 x64 qualification
+
+| Target | Code review result | Windows or hardware check |
+|--------|--------------------|---------------------------|
+| Windows 11 x64 | CI targets x64 with MSVC and WinUI. Release ZIP stages the Windows App SDK and x64 Visual C++ DLLs. | Extract on a clean Windows 11 x64 machine and launch both GUIs. Exercise Settings → Language → 한국어 in wxWidgets. |
+| Realtek RTL8761 family | BTstack registers its known Realtek IDs. The application also maps OEM IDs such as TP-Link `2357:0604` to RTL8761BU. WinUI can infer RTL8761BU for a single known adapter in WinUSB mode while preserving explicit settings. The app metadata names RTL8761CU, but the pinned BTstack USB firmware table has no `0BDA:876C` entry. The selected firmware and configuration must match the controller. | Confirm WinUSB enumeration, firmware download, HCI readiness, scan, pairing and reconnect on each dongle revision. Test with only one WinUSB Bluetooth dongle connected because the UI's chip setting does not select a physical device. |
+| Realtek `0BDA:A760` | The pinned BTstack Realtek table and app mappings have no entry. There is no verified firmware mapping for this ID. | Record the full hardware IDs and HCI local version (including LMP subversion and HCI revision). Match those to authoritative vendor firmware before adding a mapping. Check signed WinUSB availability, cold-start firmware download and restoration to the original driver. |
+| Galaxy Buds Pro SM-R190 | SSC detection uses the remote AVDTP vendor/codec IDs `0x00000075 / 0x0103` and the reported mode bits. There is no SM-R190-specific override. | Capture the advertised SSC capabilities and selected codec; confirm audible 48 kHz stereo, reconnect and AAC/SBC fallback. Try 96 kHz only if the UHQ capability is advertised. Record the earbuds' firmware version. |
+| Qualcomm FastConnect 7800 and Alternative A2DP Driver | The BTstack route uses a dedicated USB adapter. The guided driver flow performs a read-only status check and presents Device Manager instructions. | Record the Qualcomm and Alternative A2DP Driver state before setup. Verify Bluetooth pairing and audio through that original route before installing WinUSB, during SSC use and after restoring the USB dongle. |
+| Secure Boot and recovery | WinUI leaves package selection and rollback to Device Manager. | With Secure Boot and existing signing policies enabled, install an accepted signed package for the dedicated dongle only. Confirm driver state after install, reboot and rollback. Compare the final device service and driver provider/version against the baseline. |
+
+The golden tests validate SSC encoder output. They do not run Windows Plug and
+Play, exercise Bluetooth hardware, or verify that an SM-R190 decodes the stream.
+
 ## How to contribute a row
 
 1. Build & run against your sink.
@@ -90,3 +104,8 @@ Keep the device address private (use `AA:BB:…:FF` or a short prefix).
   on UHQ / 328 on basic) to avoid malformed frames.
 - The native Qiling daemon is ~5x slower than WSL2; acceptable at 48 kHz,
   marginal at 96 kHz UHQ.
+### ipTIME BT60XR / BT60XR-A (`0BDA:A760`, `REV_0200`)
+
+ipTIME 기술팀은 BT60XR-A를 **RTL8761B** 기반으로 확인했다. 같은 USB ID와 리비전의 공개 Linux 실측에서는 ROM이 `HCI 0x0A / HCI rev 0x000B / LMP subversion 0x8761 / ROM version 1`을 보고했다. Linux의 `btrtl`은 이 HCI/LMP 조합과 USB 전송 유형을 RTL8761BU 펌웨어 항목에 매핑한다. 공개 실측의 Linux 기본 펌웨어와 제조사 패치는 서로 다른 펌웨어 버전을 보고했다. 동일한 칩 계열에서도 제품별 펌웨어와 설정을 별도로 확인해야 한다. [ipTIME 기술팀 답변](https://iptime.com/support/qna/900295), [Linux 실측과 제조사 패치 비교](https://iptime.com/support/qna/898551), [Linux btrtl 칩 매핑](https://github.com/torvalds/linux/blob/master/drivers/bluetooth/btrtl.c)
+
+현재 BTstack의 `0BDA:8771` 초기화에서 재사용 후보는 HCI 버전 조회, Realtek ROM 리비전 조회, epatch 분석 및 분할 전송 순서다. 번들 BTstack에는 A760의 펌웨어 항목이 없다. Windows WinUSB에서 이 리비전의 초기화 전후 응답, 정확한 ROM 패치/설정 조합, 콜드 부팅, 재연결 및 A2DP 재생은 확인되지 않았다. 앱은 A760을 `8771`에 매핑하지 않으며 BTstack 전송에서도 모든 A760 리비전을 제외한다. 진단은 정확히 `REV_0200`을 확인한 뒤 표준 HCI 버전 조회만 수행한다. [번들 BTstack Realtek 구현](https://github.com/bluekitchen/btstack/blob/5bc5cbdbeec33be1fdbd0d50e04c0f6deab99d2d/chipset/realtek/btstack_chipset_realtek.c)

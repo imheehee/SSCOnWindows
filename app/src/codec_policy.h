@@ -16,6 +16,8 @@
 #ifndef SSCONWINDOWS_CODEC_POLICY_H
 #define SSCONWINDOWS_CODEC_POLICY_H
 
+#include <cstddef>
+
 #include "audio_encoder.h"
 
 #include <cstdint>
@@ -28,16 +30,19 @@ struct Caps {
     bool sbc = false;
     bool aac = false;
     bool ssc = false;
-    uint8_t ssc_cap = 0;     /* raw SSC capability byte (0x02 = UHQ2/96k) */
-    bool ssc_uhq = false;    /* remote advertised the UHQ2/96k bit */
+    uint8_t ssc_cap = 0;  /* raw SSC capability byte (0x02 = UHQ2/96k) */
+    bool ssc_uhq = false; /* remote advertised the UHQ2/96k bit */
 };
 
 /* Return whether the remote advertises the given codec. */
 inline bool codec_present(AudioCodec codec, const Caps &caps) {
     switch (codec) {
-    case AudioCodec::SSC: return caps.ssc;
-    case AudioCodec::AAC: return caps.aac;
-    case AudioCodec::SBC: return caps.sbc;
+    case AudioCodec::SSC:
+        return caps.ssc;
+    case AudioCodec::AAC:
+        return caps.aac;
+    case AudioCodec::SBC:
+        return caps.sbc;
     }
     return false;
 }
@@ -50,9 +55,18 @@ inline bool resolve_codec(AudioCodec requested, const Caps &caps, AudioCodec *ou
         if (out) *out = requested;
         return true;
     }
-    if (caps.ssc) { if (out) *out = AudioCodec::SSC; return true; }
-    if (caps.aac) { if (out) *out = AudioCodec::AAC; return true; }
-    if (caps.sbc) { if (out) *out = AudioCodec::SBC; return true; }
+    if (caps.ssc) {
+        if (out) *out = AudioCodec::SSC;
+        return true;
+    }
+    if (caps.aac) {
+        if (out) *out = AudioCodec::AAC;
+        return true;
+    }
+    if (caps.sbc) {
+        if (out) *out = AudioCodec::SBC;
+        return true;
+    }
     return false;
 }
 
@@ -62,10 +76,22 @@ inline bool resolve_codec(AudioCodec requested, const Caps &caps, AudioCodec *ou
  * the blob makes it emit a malformed frame -> garbled audio. Keep sorted
  * ascending. */
 inline constexpr uint32_t kBasicBitratesBps[] = {
-    88000, 96000, 128000, 192000, 229000, 256000, 328000,
+    88000,
+    96000,
+    128000,
+    192000,
+    229000,
+    256000,
+    328000,
 };
 inline constexpr uint32_t kUhqBitratesBps[] = {
-    152000, 250000, 291000, 308000, 442000, 584000, 886000,
+    152000,
+    250000,
+    291000,
+    308000,
+    442000,
+    584000,
+    886000,
 };
 
 /* SSC UHQ rates encode at 96 kHz (2x SRC from the 48 kHz capture). */
@@ -78,11 +104,11 @@ inline bool is_uhq_rate(uint32_t sample_rate) {
 inline uint32_t snap_bitrate_bps(uint32_t bps, uint32_t sample_rate) {
     const bool uhq = is_uhq_rate(sample_rate);
     const uint32_t *list = uhq ? kUhqBitratesBps : kBasicBitratesBps;
-    const size_t n = uhq ? (sizeof(kUhqBitratesBps) / sizeof(kUhqBitratesBps[0]))
-                         : (sizeof(kBasicBitratesBps) / sizeof(kBasicBitratesBps[0]));
+    const std::size_t n = uhq ? (sizeof(kUhqBitratesBps) / sizeof(kUhqBitratesBps[0]))
+                              : (sizeof(kBasicBitratesBps) / sizeof(kBasicBitratesBps[0]));
     uint32_t best = list[0];
     uint32_t best_diff = (bps > best) ? (bps - best) : (best - bps);
-    for (size_t i = 1; i < n; ++i) {
+    for (std::size_t i = 1; i < n; ++i) {
         const uint32_t cand = list[i];
         const uint32_t diff = (bps > cand) ? (bps - cand) : (cand - bps);
         if (diff < best_diff) {
@@ -98,12 +124,12 @@ inline uint32_t pick_bitrate_bps(EncoderQuality quality, uint32_t sample_rate) {
     const bool uhq = is_uhq_rate(sample_rate);
     switch (quality) {
     case EncoderQuality::High:
-        return uhq ? 584000 : 229000;   /* UHQ high / SSC 229k */
+        return uhq ? 584000 : 229000; /* UHQ high / SSC 229k */
     case EncoderQuality::Standard:
-        return uhq ? 442000 : 192000;   /* UHQ std / SSC 192k */
+        return uhq ? 442000 : 192000; /* UHQ std / SSC 192k */
     case EncoderQuality::Mobile:
     default:
-        return uhq ? 250000 : 128000;   /* UHQ low / SSC 128k */
+        return uhq ? 250000 : 128000; /* UHQ low / SSC 128k */
     }
 }
 

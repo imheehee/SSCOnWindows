@@ -96,7 +96,7 @@ jobs:
       - name: Build WinUI 3 GUI
         shell: pwsh
         run: |
-          msbuild "winui3\A2DPWBWinUI.vcxproj" -p:Configuration=${{ matrix.config }} -p:Platform=x64 -p:PlatformToolset=v143 -m:2
+          msbuild "winui3\A2DPWBWinUI.vcxproj" -restore -p:Configuration=${{ matrix.config }} -p:Platform=x64 -p:PlatformToolset=v143 -m:2
       - name: Upload WinUI payload
         uses: actions/upload-artifact@v4
         with:

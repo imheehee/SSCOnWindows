@@ -9,6 +9,7 @@
  */
 
 #include "bt_adapter_enum.h"
+#include "a760_diagnostics.h"
 
 #include <windows.h>
 #include <setupapi.h>
@@ -113,6 +114,7 @@ static bool is_in_btstack_table(uint16_t pid)
  * Returns 0 if the adapter is not a known Realtek-based device. */
 static uint16_t resolve_realtek_pid(uint16_t vid, uint16_t pid)
 {
+    if (vid == A760_VID && pid == A760_PID) return 0;
     /* Direct Realtek VID — PID is the firmware PID */
     if (vid == 0x0BDA) {
         if (is_in_btstack_table(pid)) return pid;
@@ -295,7 +297,7 @@ std::vector<FirmwareFileEntry> BtAdapterEnumerator::scan_firmware_files(const st
     return result;
 }
 
-std::vector<BtAdapterInfo> BtAdapterEnumerator::enumerate()
+std::vector<BtAdapterInfo> BtAdapterEnumerator::enumerate(bool a760_only)
 {
     std::vector<BtAdapterInfo> result;
 
@@ -339,8 +341,8 @@ std::vector<BtAdapterInfo> BtAdapterEnumerator::enumerate()
             continue;
         }
 
-        /* Skip VMware virtual adapters */
-        if (vid == 0x0E0F) {
+        /* Keep A760 diagnostics separate from streaming adapter discovery. */
+        if (vid == 0x0E0F || a760_only != (vid == A760_VID && pid == A760_PID)) {
             HeapFree(GetProcessHeap(), 0, detail);
             continue;
         }

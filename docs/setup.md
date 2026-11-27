@@ -23,19 +23,32 @@ nav_order: 2
 
 ## Step 1: Switch the dongle to WinUSB
 
-SSC On Windows talks directly to a USB Bluetooth adapter via WinUSB. You need a
-**dedicated adapter**; your built-in Bluetooth keeps working for normal Windows
-peripherals. No Zadig is required -- the app installs (and can remove) the driver.
+SSC On Windows uses a dedicated USB Bluetooth adapter via WinUSB.
 
-1. Plug in the dedicated USB Bluetooth adapter
-2. Launch `SSCOnWindows.exe`
-3. In the **Streaming Mode (Dongle)** panel, click **Enable Streaming (WinUSB)**
-4. Accept the UAC prompt (a self-signed WinUSB INF + catalog is generated, signed and installed)
+1. Stop streaming. In Device Manager, check **Details → Hardware Ids** for the
+   dedicated USB dongle. Record its current driver provider, version and device
+   instance before making changes.
+2. Use **Update driver** for that device and select a trusted, signed WinUSB
+   package that explicitly matches its hardware ID. If Windows rejects the
+   package or none is available, stop and leave Secure Boot, signature
+   enforcement and certificate trust settings as configured.
+3. In WinUI **Troubleshooting**, refresh and confirm the driver service is
+   **WinUSB**. WinUI recognizes a single TP-Link UB500 (`2357:0604`) or
+   Realtek RTL8761BU (`0BDA:8771`) for this check. For other dongles, check
+   the service in Device Manager. Restart the app after changing the driver so it
+   can initialize the controller with the selected firmware.
 
-To revert, click **Restore Windows BT (BTHUSB)**.
+To restore Windows Bluetooth, stop streaming and use **Properties → Driver →
+Roll Back Driver** on the same device. If unavailable, use **Update driver** to
+select the original signed vendor or Windows Bluetooth package. Refresh and
+verify the original driver provider/service and Windows Bluetooth pairing.
+Check that built-in Bluetooth and any Alternative A2DP Driver configuration
+still work. Keep those drivers and settings in place through the test.
 
-{: .warning }
-Never switch the driver on your PC's **built-in** Bluetooth adapter -- doing so disables all normal Bluetooth (keyboard, mouse, audio) and may require Device Manager or system recovery to restore. Always use a separate, dedicated dongle.
+For SSC with WSL2, run `setup.ps1` from the checkout. The application uses the
+default WSL distro and the WSL user's `~/ssc` directory. When you install the
+daemon in another distro, set `SSC_WSL_DISTRO` in the PowerShell session that
+launches the app.
 
 ## Step 2: Find Your Headphone's Bluetooth Address
 

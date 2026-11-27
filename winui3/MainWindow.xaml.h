@@ -36,6 +36,8 @@ namespace winrt::A2DPWBWinUI::implementation
         void OnSetupClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
         void OnEnableStreamingClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
         void OnRestoreBtClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+        void OnA760DiagnosticsClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+        winrt::fire_and_forget RunA760Diagnostics();
         void OnRefreshDriverClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
         void OnToggleLogClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
 
@@ -62,12 +64,11 @@ namespace winrt::A2DPWBWinUI::implementation
         void SetStreamingUi(bool streaming);
         void RememberLastDevice(const std::string& mac, const std::string& name);
         void ShowSetupGuide();
-        void RunDriverSwitch(bool enable_winusb);
+        void ShowDriverInstructions(bool enable_winusb);
 
         A2dpService::DeviceEntry selectedDevice_{};
         bool hasSelectedDevice_{ false };
         bool uiReady_{ false };
-        bool driverBusy_{ false };
         int selectedCodecIndex_{ 0 };
         int selectedQualityIndex_{ 0 };
         int selectedRateIndex_{ 0 };
