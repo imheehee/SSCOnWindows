@@ -273,4 +273,16 @@
   <data name="A760SaveLogButton.Content" xml:space="preserve">
     <value>Save A760 log</value>
   </data>
+  <data name="SscEncoderSetup.Header" xml:space="preserve">
+    <value>SSC encoder setup</value>
+  </data>
+  <data name="SscInstallButton.Content" xml:space="preserve">
+    <value>Choose encoder and install</value>
+  </data>
+  <data name="SscDiagnoseButton.Content" xml:space="preserve">
+    <value>Check dependencies and port</value>
+  </data>
+  <data name="SscTestButton.Content" xml:space="preserve">
+    <value>Test SSC encoder before connecting</value>
+  </data>
 </root>

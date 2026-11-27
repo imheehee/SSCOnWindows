@@ -5,6 +5,8 @@
 #endif
 #include "driver_mode.h"
 #include "a760_diagnostics.h"
+#include "ssc_runtime.h"
+#include <shellapi.h>
 #include <shobjidl.h>
 #include <fstream>
 #include "driver_switch.h"
@@ -38,7 +40,7 @@ namespace
         return IsKorean() ? korean : english;
     }
 
-    std::filesystem::path ChooseA760Path(bool saveLog)
+    std::filesystem::path ChooseA760Path(bool saveLog, bool encoder = false)
     {
         auto dialog = saveLog
             ? winrt::create_instance<IFileDialog>(CLSID_FileSaveDialog)
@@ -46,10 +48,14 @@ namespace
         FILEOPENDIALOGOPTIONS options{};
         winrt::check_hresult(dialog->GetOptions(&options));
         winrt::check_hresult(dialog->SetOptions(options | FOS_FORCEFILESYSTEM |
-                                               (saveLog ? FOS_OVERWRITEPROMPT : FOS_PICKFOLDERS)));
+                                               (saveLog ? FOS_OVERWRITEPROMPT : encoder ? FOS_FILEMUSTEXIST : FOS_PICKFOLDERS)));
         if (saveLog) {
             winrt::check_hresult(dialog->SetFileName(L"a760-session.txt"));
             winrt::check_hresult(dialog->SetDefaultExtension(L"txt"));
+        } else if (encoder) {
+            winrt::check_hresult(dialog->SetTitle(L"libScalable_Encoder.so"));
+            COMDLG_FILTERSPEC filter{L"libScalable_Encoder.so", L"libScalable_Encoder.so"};
+            winrt::check_hresult(dialog->SetFileTypes(1, &filter));
         } else {
             winrt::check_hresult(dialog->SetTitle(UiText(L"Select the folder containing both firmware files",
                                                        L"펌웨어 파일 두 개가 있는 폴더를 선택하세요")));
@@ -63,6 +69,45 @@ namespace
         winrt::check_hresult(item->GetDisplayName(SIGDN_FILESYSPATH, &path));
         const std::unique_ptr<wchar_t, decltype(&CoTaskMemFree)> holder(path, CoTaskMemFree);
         return std::filesystem::path(path);
+    }
+
+    std::string ExplainSsc(const std::string& report, bool native)
+    {
+        std::string result;
+        const auto explain = [&](const char* key, const char* english, const char* korean) {
+            if (report.find(key) != std::string::npos) result += std::string(UiText(english, korean)) + "\n";
+        };
+        explain("SSC_CHECK_OK", "Encoder files and runtime were found.", "인코더 파일과 실행 환경이 확인됐습니다.");
+        explain("SSC_PORT_20248_FREE", "TCP port 20248 is available.", "TCP 포트 20248을 사용할 수 있습니다.");
+        explain("SSC_SELF_TEST_OK", "PCM encoding test passed. The daemon has stopped.",
+                "PCM 인코딩 자체 테스트가 통과했고 데몬을 종료했습니다.");
+        explain("SSC_DEP_BLOB", "Choose your libScalable_Encoder.so using the setup button.",
+                "설치 버튼으로 직접 확보한 libScalable_Encoder.so를 선택하세요.");
+        explain("SSC_DEP_WSL2", "Check wsl -l -v and the selected Ubuntu WSL2 distribution.",
+                "wsl -l -v에서 Ubuntu가 WSL2인지 확인하고 해당 배포판을 실행하세요.");
+        explain("SSC_DEP_QEMU", "Install qemu-user and libc6-arm64-cross via the setup console.",
+                "설치 콘솔에서 Ubuntu의 qemu-user 및 libc6-arm64-cross를 준비하세요.");
+        explain("SSC_DEP_WSL_ASSETS", "Run setup to rebuild the managed WSL daemon and copy its helper.",
+                "설치 메뉴에서 관리형 WSL 데몬을 다시 빌드하고 헬퍼와 shim을 설치하세요.");
+        explain("SSC_DEP_PYTHON", "Install Python 3.14 with py, then check py -3.14 --version.",
+                "Python 3.14와 py 런처를 설치한 후 py -3.14 --version으로 확인하세요.");
+        explain("SSC_DEP_QILING", "Install Qiling for Python 3.14 from the setup console.",
+                "설치 콘솔에서 Python 3.14용 Qiling을 설치하세요.");
+        explain("SSC_DEP_NATIVE_ASSETS", "Check the ARM64 rootfs and Qiling dependency import.",
+                "ARM64 rootfs의 helper, shims, lib와 Qiling 의존성 로딩을 확인하세요.");
+        explain("SSC_DEP_PORT", "TCP 20248 is occupied. Close the other encoder instance and retest.",
+                "TCP 20248이 사용 중입니다. 해당 프로세스나 다른 인코더 인스턴스를 확인하고 다시 시험하세요.");
+        explain("SSC_DEP_SOCKET", "Windows Winsock initialization failed.", "Windows Winsock 초기화에 실패했습니다.");
+        explain("SSC_DEP_START", "The selected daemon process could not start.", "선택한 인코더 데몬을 실행하지 못했습니다.");
+        if (report.find("SSC_DEP_CONNECT") != std::string::npos) {
+            result += native ? UiText("Check Qiling startup errors and localhost TCP 20248.\n",
+                                      "Qiling 시작 오류와 로컬 TCP 20248을 확인하세요.\n")
+                             : UiText("Check WSL localhost forwarding to TCP 20248 and the daemon output.\n",
+                                      "WSL의 localhost 포트 전달과 데몬 출력에서 TCP 20248을 확인하세요.\n");
+        }
+        explain("SSC_DEP_ENCODE", "The daemon started but returned no frame. Check blob compatibility and dependency errors below.",
+                "데몬이 시작됐지만 SSC 프레임을 받지 못했습니다. 아래 로그에서 바이너리 호환성과 의존성 오류를 확인하세요.");
+        return result + "\n" + report;
     }
 
     struct Rtl8761Adapter {
@@ -409,6 +454,7 @@ namespace winrt::A2DPWBWinUI::implementation
 
         // Load settings and saved devices (mirrors wxWidgets MainFrame init)
         settings_.load();
+        SscEngineCombo().SelectedIndex(settings_.ssc_native ? 1 : 0);
         service_->load_saved_devices();
         const auto adapter = FindRtl8761Adapter();
         const bool adapter_ready = adapter && adapter->status.mode == DongleDriverMode::WinUsbStream;
@@ -560,7 +606,7 @@ namespace winrt::A2DPWBWinUI::implementation
 
     void MainWindow::OnScanClick(IInspectable const&, RoutedEventArgs const&)
     {
-        if (!service_ || a760Busy_ || service_->is_scanning()) return;
+        if (!service_ || a760Busy_ || sscBusy_ || service_->is_scanning()) return;
 
         AppendLog("Scanning for Bluetooth audio devices (BTstack inquiry ~8s)...");
         ScanButton().IsEnabled(false);
@@ -574,7 +620,7 @@ namespace winrt::A2DPWBWinUI::implementation
 
     void MainWindow::OnConnectClick(IInspectable const&, RoutedEventArgs const&)
     {
-        if (!service_ || a760Busy_) return;
+        if (!service_ || a760Busy_ || sscBusy_) return;
 
         if (isStreaming_) {
             StopStream();
@@ -595,6 +641,7 @@ namespace winrt::A2DPWBWinUI::implementation
         profile.bit_depth = ProfileManager::index_to_bit_depth(selectedBitDepthIndex_);
         profile.capture_mode = "loopback";
         profile.sample_rate = SelectedSampleRate();
+        profile.ssc_native = settings_.ssc_native;
 
         AppendLog("Connecting to " + selectedDevice_.name + " [" + profile.codec + "]...");
         RememberLastDevice(profile.device_address, profile.device_name);
@@ -605,7 +652,7 @@ namespace winrt::A2DPWBWinUI::implementation
 
     void MainWindow::OnDirectConnectClick(IInspectable const&, RoutedEventArgs const&)
     {
-        if (!service_ || a760Busy_) return;
+        if (!service_ || a760Busy_ || sscBusy_) return;
 
         if (isStreaming_) {
             StopStream();
@@ -640,6 +687,7 @@ namespace winrt::A2DPWBWinUI::implementation
         profile.bit_depth = ProfileManager::index_to_bit_depth(selectedBitDepthIndex_);
         profile.capture_mode = "loopback";
         profile.sample_rate = SelectedSampleRate();
+        profile.ssc_native = settings_.ssc_native;
 
         AppendLog("Direct connect to " + mac + " [" + profile.codec + "]...");
         RememberLastDevice(profile.device_address, profile.device_name);
@@ -895,7 +943,7 @@ namespace winrt::A2DPWBWinUI::implementation
 
     void MainWindow::StartStream(const std::string& mac, const std::string& name, const std::string& logText)
     {
-        if (!service_ || a760Busy_ || isStreaming_) {
+        if (!service_ || a760Busy_ || sscBusy_ || isStreaming_) {
             if (isStreaming_) AppendLog(LogTag::Warn, "Disconnect first.");
             return;
         }
@@ -909,6 +957,7 @@ namespace winrt::A2DPWBWinUI::implementation
         profile.bit_depth = ProfileManager::index_to_bit_depth(selectedBitDepthIndex_);
         profile.capture_mode = "loopback";
         profile.sample_rate = SelectedSampleRate();
+        profile.ssc_native = settings_.ssc_native;
 
         AppendLog(logText + " -> " + name + " [" + profile.codec + "]...");
         RememberLastDevice(mac, name);
@@ -1252,6 +1301,15 @@ namespace winrt::A2DPWBWinUI::implementation
             if (hasSelectedDevice_) ConnectButton().IsEnabled(true);
             break;
         }
+        if (state == A2dpService::State::Error && text == "error.encoder_init" && service_) {
+            const auto detail = service_->ssc_error();
+            if (!detail.empty()) {
+                const auto message = ExplainSsc(detail, settings_.ssc_native);
+                SscResult().Text(AToW(message));
+                StatusDetailText().Text(AToW(message.substr(0, message.find('\n'))));
+                AppendLog(LogTag::Error, message);
+            }
+        }
         AppendLog(LogTag::Data, "[State] " + text);
     }
 
@@ -1323,6 +1381,98 @@ namespace winrt::A2DPWBWinUI::implementation
         }
     }
 
+    void MainWindow::OnSscEngineChanged(IInspectable const&, SelectionChangedEventArgs const&)
+    {
+        if (!uiReady_) return;
+        settings_.ssc_native = SscEngineCombo().SelectedIndex() == 1;
+        settings_.save();
+        SscResult().Text(L"");
+    }
+
+    void MainWindow::SetSscBusy(bool busy)
+    {
+        sscBusy_ = busy;
+        SscEngineCombo().IsEnabled(!busy);
+        SscInstallButton().IsEnabled(!busy);
+        SscDiagnoseButton().IsEnabled(!busy);
+        SscTestButton().IsEnabled(!busy);
+    }
+
+    void MainWindow::OnSscInstallClick(IInspectable const&, RoutedEventArgs const&)
+    {
+        InstallSscEncoder();
+    }
+
+    winrt::fire_and_forget MainWindow::InstallSscEncoder()
+    {
+        if (sscBusy_ || a760Busy_ || service_->bluetooth_busy()) co_return;
+        auto lifetime = get_strong();
+        try {
+            const auto blob = ChooseA760Path(false, true);
+            if (blob.empty()) co_return;
+            const auto tools = ssc_tools_dir();
+            if (tools.empty()) throw std::runtime_error("SSC setup script missing");
+            const auto args = L"-NoProfile -NoExit -File " + ssc_quote((tools / L"ssc_setup.ps1").wstring())
+                + L" -Engine " + (settings_.ssc_native ? L"Qiling" : L"WSL2")
+                + L" -Blob " + ssc_quote(blob.wstring());
+            SHELLEXECUTEINFOW exec{};
+            exec.cbSize = sizeof(exec);
+            exec.fMask = SEE_MASK_NOCLOSEPROCESS;
+            exec.lpFile = L"powershell.exe";
+            exec.lpParameters = args.c_str();
+            exec.nShow = SW_SHOWNORMAL;
+            if (!ShellExecuteExW(&exec) || !exec.hProcess) throw std::runtime_error("PowerShell launch failed");
+            SetSscBusy(true);
+            SscResult().Text(UiText(L"Finish setup and close its PowerShell window, then run the self-test.",
+                                   L"설치를 마치고 PowerShell 창을 닫은 뒤 자체 테스트를 실행하세요."));
+            winrt::apartment_context ui;
+            co_await winrt::resume_background();
+            WaitForSingleObject(exec.hProcess, INFINITE);
+            CloseHandle(exec.hProcess);
+            co_await ui;
+            SetSscBusy(false);
+        } catch (...) {
+            SetSscBusy(false);
+            SscResult().Text(UiText(L"Could not open SSC setup. See docs/ko/setup.md.",
+                                   L"설치 프로그램을 열지 못했습니다. docs/ko/setup.md를 확인하세요."));
+        }
+    }
+
+    void MainWindow::OnSscDiagnoseClick(IInspectable const&, RoutedEventArgs const&)
+    {
+        RunSscCheck(false);
+    }
+
+    void MainWindow::OnSscTestClick(IInspectable const&, RoutedEventArgs const&)
+    {
+        RunSscCheck(true);
+    }
+
+    winrt::fire_and_forget MainWindow::RunSscCheck(bool selfTest)
+    {
+        if (sscBusy_ || a760Busy_) co_return;
+        if (service_->bluetooth_busy()) {
+            SscResult().Text(UiText(L"Stop discovery and streaming first.", L"검색과 스트리밍을 먼저 중지하세요."));
+            co_return;
+        }
+        auto lifetime = get_strong();
+        SetSscBusy(true);
+        SscResult().Text(UiText(L"Checking the SSC encoder…", L"SSC 인코더를 확인하고 있습니다…"));
+        const bool native = settings_.ssc_native;
+        const uint32_t rate = SelectedSampleRate() == 44100 ? 44100 : 48000;
+        winrt::apartment_context ui;
+        co_await winrt::resume_background();
+        std::string result;
+        try {
+            result = selfTest ? ssc_self_test(native, rate) : ssc_diagnose(native);
+        } catch (...) {
+            result = "SSC_DEP_START";
+        }
+        co_await ui;
+        SscResult().Text(AToW(ExplainSsc(result, native)));
+        SetSscBusy(false);
+    }
+
     void MainWindow::OnA760DiagnosticsClick(IInspectable const&, RoutedEventArgs const&)
     {
         RunA760Diagnostics();
@@ -1330,7 +1480,7 @@ namespace winrt::A2DPWBWinUI::implementation
 
     winrt::fire_and_forget MainWindow::RunA760Diagnostics()
     {
-        if (a760Busy_) co_return;
+        if (a760Busy_ || sscBusy_) co_return;
         auto lifetime = get_strong();
         const bool korean = IsKorean();
         SetA760Busy(true);
@@ -1393,7 +1543,7 @@ namespace winrt::A2DPWBWinUI::implementation
 
     winrt::fire_and_forget MainWindow::VerifyA760Firmware(std::filesystem::path directory)
     {
-        if (a760Busy_) co_return;
+        if (a760Busy_ || sscBusy_) co_return;
         auto lifetime = get_strong();
         a760Firmware_.reset();
         SetA760Busy(true);
@@ -1427,7 +1577,7 @@ namespace winrt::A2DPWBWinUI::implementation
 
     winrt::fire_and_forget MainWindow::InitializeA760()
     {
-        if (a760Busy_ || !a760Firmware_ || !service_) co_return;
+        if (a760Busy_ || sscBusy_ || !a760Firmware_ || !service_) co_return;
         if (service_->bluetooth_busy()) {
             ShowA760Result(UiText("Stop discovery and streaming before starting the experiment.",
                                  "실험을 시작하기 전에 장치 검색과 스트리밍을 중지하세요."));

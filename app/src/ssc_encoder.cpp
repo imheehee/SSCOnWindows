@@ -96,11 +96,14 @@ bool SscEncoder::init(uint16_t mtu, EncoderQuality quality,
     bitrate_kbps_ = br / 1000;
     sample_rate = rate;
 
-    backend_ = std::make_unique<DaemonSscBackend>(native_daemon_);
-    if (!backend_->init(sample_rate, channels_, br)) {
-        backend_.reset();
+    auto daemon = std::make_unique<DaemonSscBackend>(native_daemon_);
+    last_error_.clear();
+    if (!daemon->init(sample_rate, channels_, br)) {
+        last_error_ = daemon->last_error();
+        fprintf(stderr, "SSC: %s\n", last_error_.c_str());
         return false;
     }
+    backend_ = std::move(daemon);
     initialized_ = true;
     fprintf(stderr, "SSC: initialized rate=%u ch=%u bitrate=%u kbps=%u\n",
             sample_rate, channels_, br, bitrate_kbps_);

@@ -164,6 +164,7 @@ public:
 
     // The UI consumes the verified image only after per-session approval.
     bool start_a760_experiment(A760Firmware firmware, std::string &report);
+    std::string ssc_error();
     bool bluetooth_busy() const {
         return running_.load() || scanning_.load();
     }
@@ -230,6 +231,8 @@ private:
     StatsCallback stats_cb_;
     VolumeChangedCallback volume_cb_;
     std::mutex cb_mutex_;
+    std::mutex ssc_error_mutex_;
+    std::string ssc_error_;
 
     void notify_state(State s, const std::string &text);
     void notify_stream_info(const StreamInfo &info);

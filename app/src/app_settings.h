@@ -12,6 +12,7 @@
 class AppSettings {
 public:
     /* Load settings from %APPDATA%\A2DPWB\settings.json */
+    bool ssc_native = false;
     void load();
 
     /* Save current settings to disk */

@@ -133,16 +133,26 @@ class HelperBridge:
             self._out_r = None
 
 
-def run_daemon(port, sample_rate, channels, bitrate):
+def run_daemon(port, sample_rate, channels, bitrate, managed=False):
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if managed and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    else:
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", port))
     srv.listen(4)
     print(f"sscblobd(py): listening on 127.0.0.1:{port} (rate={sample_rate} "
           f"ch={channels} br={bitrate} helper={HELPER})", flush=True)
 
+    if managed:
+        srv.settimeout(15)
+        print("SSC_MANAGED_READY", flush=True)
     while True:
-        conn, _ = srv.accept()
+        try:
+            conn, _ = srv.accept()
+        except socket.timeout:
+            srv.close()
+            return
         conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         print("sscblobd(py): client connected", flush=True)
         try:
@@ -156,6 +166,9 @@ def run_daemon(port, sample_rate, channels, bitrate):
         finally:
             conn.close()
             print("sscblobd(py): client disconnected", flush=True)
+        if managed:
+            srv.close()
+            return
 
 
 def service_client(conn, sample_rate, channels, bitrate):
@@ -243,6 +256,9 @@ def run_test(frames=16):
 
 
 def main():
+    if sys.argv[1:] == ["--check-managed"]:
+        print("SSC_CHECK_OK")
+        return
     if len(sys.argv) >= 2 and sys.argv[1] == "--test":
         sys.exit(run_test())
     if len(sys.argv) < 5:
@@ -253,7 +269,7 @@ def main():
     rate = int(sys.argv[2])
     ch = int(sys.argv[3])
     br = int(sys.argv[4])
-    run_daemon(port, rate, ch, br)
+    run_daemon(port, rate, ch, br, managed="--managed" in sys.argv[5:])
 
 
 if __name__ == "__main__":

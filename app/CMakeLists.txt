@@ -53,6 +53,7 @@ add_library(a2dpwb_core STATIC
     src/aac_encoder.cpp
     src/ssc_encoder.cpp
     src/ssc_daemon_backend.cpp
+    src/ssc_runtime.cpp
     src/bt_device.cpp
     src/a760_diagnostics.cpp
     src/a760_firmware.cpp

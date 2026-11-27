@@ -595,6 +595,11 @@ void A2dpService::set_scan_complete_callback(ScanCompleteCallback cb) {
     scan_complete_cb_ = std::move(cb);
 }
 
+std::string A2dpService::ssc_error() {
+    std::lock_guard<std::mutex> lock(ssc_error_mutex_);
+    return ssc_error_;
+}
+
 void A2dpService::notify_state(State s, const std::string &text) {
     state_.store(s);
     fprintf(stderr, "A2dpService: state=%d text=%s\n", (int)s, text.c_str());
@@ -1008,7 +1013,17 @@ void A2dpService::start_streaming(const ConnectionProfile &profile) {
         worker_thread_.join();
     }
 
-    worker_thread_ = std::thread(&A2dpService::streaming_thread_func, this);
+    {
+        std::lock_guard<std::mutex> lock(ssc_error_mutex_);
+        ssc_error_.clear();
+    }
+    try {
+        worker_thread_ = std::thread(&A2dpService::streaming_thread_func, this);
+    } catch (...) {
+        running_.store(false);
+        notify_state(State::Error, L("error.btstack_crash_stream"));
+        return;
+    }
     fprintf(stderr, "A2dpService: new worker thread started\n");
     fflush(stderr);
 }
@@ -1043,7 +1058,12 @@ void A2dpService::stop_streaming() {
 }
 
 void A2dpService::streaming_thread_func() {
-    int code = seh_call([](void *p) { static_cast<A2dpService *>(p)->streaming_thread_func_inner(); }, this);
+    int code = -1;
+    try {
+        code = seh_call([](void *p) { static_cast<A2dpService *>(p)->streaming_thread_func_inner(); }, this);
+    } catch (...) {
+        // C++ startup failures must reach the same terminal UI state as SEH.
+    }
     if (code != 0) {
         fprintf(stderr, "A2dpService: SEH exception 0x%08x in streaming thread\n", (unsigned)code);
         fflush(stderr);
@@ -1176,6 +1196,10 @@ void A2dpService::streaming_thread_func_inner() {
     set_device_caps(raw_caps.sbc, raw_caps.aac, raw_caps.ssc,
                     raw_caps.ssc_uhq, raw_caps.ssc_cap);
     AudioCodec selected_codec = requested_codec;
+    if (requested_codec != AudioCodec::SSC) caps.ssc = false;
+#ifndef AAC_ENCODER_AVAILABLE
+    caps.aac = false;
+#endif
     if (!codec_policy::resolve_codec(requested_codec, caps, &selected_codec)) {
         notify_state(State::Error, L("error.no_compatible_codec"));
         transport->disconnect();
@@ -1314,6 +1338,7 @@ void A2dpService::streaming_thread_func_inner() {
 #endif
     case AudioCodec::SSC: {
         auto ssc = std::make_unique<SscEncoder>();
+        ssc->set_native_daemon(p.ssc_native);
         ssc->set_legacy_mode(codec_policy::ssc_legacy_mode(codec_policy::ssc_configuration(caps.ssc_cap, encode_sr)));
         encoder = std::move(ssc);
         break;
@@ -1338,6 +1363,10 @@ void A2dpService::streaming_thread_func_inner() {
              bit_depth_index, codec_name_for(selected_codec), sample_bytes, media_mtu);
 
     if (!encoder->init(media_mtu, quality, encode_sr, use_ch)) {
+        if (selected_codec == AudioCodec::SSC) {
+            std::lock_guard<std::mutex> lock(ssc_error_mutex_);
+            ssc_error_ = static_cast<SscEncoder *>(encoder.get())->last_error();
+        }
         notify_state(State::Error, L("error.encoder_init"));
         transport->disconnect();
         running_.store(false);

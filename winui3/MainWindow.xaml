@@ -331,6 +331,25 @@
                         </StackPanel>
                     </Expander>
 
+                    <Expander x:Uid="SscEncoderSetup" Header="SSC encoder setup">
+                        <StackPanel Spacing="8" Margin="0,8,0,0">
+                            <ComboBox x:Name="SscEngineCombo" SelectedIndex="0" SelectionChanged="OnSscEngineChanged">
+                                <ComboBoxItem Content="WSL2 + QEMU" />
+                                <ComboBoxItem Content="Windows + Qiling" />
+                            </ComboBox>
+                            <Button x:Uid="SscInstallButton" x:Name="SscInstallButton"
+                                    Content="Choose encoder and install" Click="OnSscInstallClick"
+                                    Style="{StaticResource AppButtonStyle}" ContentTemplate="{StaticResource WrappedButtonCaption}" />
+                            <Button x:Uid="SscDiagnoseButton" x:Name="SscDiagnoseButton"
+                                    Content="Check dependencies and port" Click="OnSscDiagnoseClick"
+                                    Style="{StaticResource AppButtonStyle}" ContentTemplate="{StaticResource WrappedButtonCaption}" />
+                            <Button x:Uid="SscTestButton" x:Name="SscTestButton"
+                                    Content="Test SSC encoder before connecting" Click="OnSscTestClick"
+                                    Style="{StaticResource AppButtonStyle}" ContentTemplate="{StaticResource WrappedButtonCaption}" />
+                            <TextBlock x:Name="SscResult" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                        </StackPanel>
+                    </Expander>
+
                     <!-- ================= Troubleshooting ================= -->
                     <Expander x:Uid="Troubleshooting" Header="Troubleshooting">
                         <StackPanel Spacing="8" Margin="0,8,0,0">

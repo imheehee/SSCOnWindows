@@ -273,4 +273,16 @@
   <data name="A760SaveLogButton.Content" xml:space="preserve">
     <value>A760 로그 저장</value>
   </data>
+  <data name="SscEncoderSetup.Header" xml:space="preserve">
+    <value>SSC 인코더 설치 및 설정</value>
+  </data>
+  <data name="SscInstallButton.Content" xml:space="preserve">
+    <value>인코더 파일 선택 및 설치</value>
+  </data>
+  <data name="SscDiagnoseButton.Content" xml:space="preserve">
+    <value>실행 환경·의존성·포트 진단</value>
+  </data>
+  <data name="SscTestButton.Content" xml:space="preserve">
+    <value>연결 전 SSC 인코더 자체 테스트</value>
+  </data>
 </root>

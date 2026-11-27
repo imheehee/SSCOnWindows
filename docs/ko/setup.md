@@ -30,20 +30,32 @@ Start-Process .\wx\SSCOnWindows-0.2.0.exe -ArgumentList '--diagnose-a760' -Wait 
 
 사용자 제공 Windows 11 실측에서 WinUSB, HCI `0x1001`, ROM `0xFC6D → 0x01`까지 확인됐습니다. 이번 앱에서 실행하는 RAM 전송·리셋·검색·페어링·가청 재생은 실물 검증 단계입니다. [펌웨어 비교](../compatibility.md)
 
-## 삼성 SSC 인코더 준비
+## 삼성 SSC 인코더 설치 및 연결 전 테스트
 
-SSC 스트리밍에는 A760 펌웨어와 별도로, 소유한 Galaxy의 시스템/vendor 이미지에서 적법하게 확보한 **ARM64 ELF `libScalable_Encoder.so`**가 필요합니다. 이미지에 따라 `vendor/lib64` 또는 추출한 Bluetooth APEX 파일 내부에서 찾습니다. 테스트 ZIP에는 인코더 바이너리가 포함되지 않습니다.
+WinUI에서 **SSC 인코더 설치 및 설정**을 열고 실행 방식을 선택하세요. **인코더 파일 선택 및 설치**에서 직접 확보한 `libScalable_Encoder.so`를 선택하면 설치 콘솔이 열립니다. 콘솔의 설치 질문에 답한 뒤 창을 닫고, **실행 환경·의존성·포트 진단 → 연결 전 SSC 인코더 자체 테스트** 순으로 실행합니다. 자체 테스트는 선택된 방식으로 실제 PCM 프레임을 보내 SSC 데이터가 돌아오는지 확인하고 데몬을 종료합니다. 스트리밍에서는 앱이 데몬을 시작하고 세션이 끝나면 종료합니다.
 
-1. Ubuntu가 WSL **버전 2**로 설치돼 있는지 `wsl -l -v`로 확인합니다. 설치가 필요하면 Windows에서 `wsl --install -d Ubuntu`를 실행하고 설치를 완료합니다.
-2. 기존 저장소 체크아웃에서 PowerShell을 열고 파일 위치를 실제 경로로 바꿔 실행합니다.
+인코더는 소유한 Galaxy의 시스템/vendor 이미지에서 적법하게 확보한 **ARM64 ELF `libScalable_Encoder.so`**를 사용합니다. 이미지에 따라 `vendor/lib64` 또는 추출한 Bluetooth APEX 내부에서 찾습니다. 테스트 ZIP에는 삼성 인코더가 들어 있지 않습니다.
 
-   ```powershell
-   .\setup.ps1 -Distro Ubuntu -BlobFrom 'C:\SSC\libScalable_Encoder.so'
-   $env:SSC_WSL_DISTRO = 'Ubuntu'
-   ```
+### WSL2 + QEMU
 
-   기존 스크립트가 WSL의 ARM64 실행에 필요한 QEMU와 GCC 설치를 안내하고 데몬을 빌드합니다. 같은 PowerShell에서 ZIP의 `winui\SSCOnWindows.exe`를 실행하면 해당 배포판을 사용합니다.
-3. WSL 배포 위치는 `~/ssc/blob/libScalable_Encoder.so`, `~/ssc/bin/start_sscblobd`, `~/ssc/openssc/build_blob/sscblobd`입니다. 데몬 로그는 `~/ssc/work/sscblobd.log`에 생성됩니다. 스트리밍을 멈춘 상태에서 WSL 터미널로 `~/ssc/bin/start_sscblobd 20248 48000 2 192000`을 실행하면 48 kHz/192 kbps 데몬 기동을 별도로 확인할 수 있습니다.
+- `wsl -l -v`에서 Ubuntu가 버전 **2**로 표시되는지 확인합니다. 필요한 경우 Windows PowerShell에서 `wsl --install -d Ubuntu`를 실행하고 Ubuntu 초기 설정을 완료합니다. 기본 배포판이 다르면 WinUI를 실행하는 PowerShell에서 `$env:SSC_WSL_DISTRO = 'Ubuntu'`를 설정합니다.
+- 설치 콘솔은 Ubuntu의 `gcc`, `qemu-user`, `libc6-arm64-cross`가 없을 때 apt 설치를 제안합니다. 바이너리는 `~/ssc/blob/libScalable_Encoder.so`에, 데몬·헬퍼·shim은 `~/ssc/openssc/build_blob/`에 설치됩니다. 구버전 데몬이 이미 설치된 경우 이 빌드의 설치 메뉴에서 다시 빌드합니다.
+- 데몬은 WSL 루프백의 TCP `20248`에만 바인딩합니다. Windows에서 연결하지 못하면 WSL의 localhost 전달과 이전 SSC 데몬이 포트를 점유하는지 확인하세요. 방화벽이나 드라이버 서명 설정을 변경할 필요는 없습니다.
+
+### Windows + Qiling
+
+- [Python 설치 프로그램](https://www.python.org/downloads/windows/)으로 Python 3.14와 `py` 런처를 준비합니다. 설치 콘솔이 `py -3.14 -m pip install --user qiling`을 제안합니다.
+- 설치 콘솔에서 신뢰할 수 있는 ARM64 rootfs 폴더를 지정합니다. 기존 저장소 체크아웃의 `tools\ssc_daemon\rootfs`에 `helper\ssc_blob_helper`, `shims\libc.so`, `lib\ld-linux-aarch64.so.1`, `lib\aarch64-linux-gnu` 등의 런타임이 있습니다. 설치 프로그램은 이 폴더의 `helper`, `shims`, `lib`만 복사하고, 직접 선택한 인코더만 `%LOCALAPPDATA%\SSCOnWindows\encoder\rootfs\blob\libScalable_Encoder.so`에 배치합니다. 데몬은 `%LOCALAPPDATA%\SSCOnWindows\encoder\sscblobd.py`입니다.
+- 콘솔 설치를 직접 실행할 경우, 압축 해제 폴더에서 다음 명령을 사용합니다. Python/Qiling 또는 WSL 설치와 스크립트 실행은 현재 Windows 정책이 허용하는 범위에서 진행하세요.
+
+  ```powershell
+  .\tools\ssc_setup.ps1 -Engine WSL2 -Blob 'C:\SSC\libScalable_Encoder.so'
+  .\tools\ssc_setup.ps1 -Engine Qiling -Blob 'C:\SSC\libScalable_Encoder.so' -Rootfs 'C:\SSCOnWindows\tools\ssc_daemon\rootfs'
+  ```
+
+### `error.encoder_init` 또는 인코더 없는 연결
+
+`error.encoder_init`은 A2DP 코덱을 설정한 다음 선택한 인코더의 초기화 함수가 실패했다는 뜻입니다. SSC에서는 이전 빌드가 WSL/네이티브 프로세스 시작, 의존성, TCP 연결 실패를 한 상태로 표시했습니다. 주어진 로그만으로 어느 단계였는지 판별할 수 없습니다. 이번 빌드에서는 파일, 환경, 포트, 실제 프레임 생성 실패를 구분합니다. **SSC 준비 없이 Bluetooth 오디오를 시험하려면 코덱을 AAC 또는 SBC로 고른 뒤 연결**하세요. 이 선택은 SSC 데몬을 시작하지 않습니다.
 
 ## Windows Bluetooth 드라이버 복원
 

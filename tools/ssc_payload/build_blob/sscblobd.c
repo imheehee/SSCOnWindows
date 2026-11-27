@@ -24,6 +24,8 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <signal.h>
+#include <poll.h>
+#include <sys/prctl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -103,6 +105,7 @@ static pid_t spawn_helper(const char *helper_path, int sample_rate, int channels
     if (pipe(in_fds) < 0 || pipe(out_fds) < 0)
         return -1;
 
+    const pid_t parent = getpid();
     pid_t pid = fork();
     if (pid < 0) {
         close(in_fds[0]);
@@ -112,17 +115,20 @@ static pid_t spawn_helper(const char *helper_path, int sample_rate, int channels
         return -1;
     }
     if (pid == 0) {
+        if (prctl(PR_SET_PDEATHSIG, SIGKILL) < 0 || getppid() != parent) _exit(127);
         (void)dup2(in_fds[0], STDIN_FILENO);
         (void)dup2(out_fds[1], STDOUT_FILENO);
         close(in_fds[0]);
         close(in_fds[1]);
         close(out_fds[0]);
         close(out_fds[1]);
+        const char *shim_dir = getenv("SSC_SHIM_DIR");
+        const char *blob = getenv("SSCENC_BLOB_SO");
         char *env_str;
-        if (asprintf(&env_str, "LD_LIBRARY_PATH=%s", SHIMDIR) < 0)
+        if (asprintf(&env_str, "LD_LIBRARY_PATH=%s", shim_dir ? shim_dir : SHIMDIR) < 0)
             _exit(127);
         execl("/usr/bin/qemu-aarch64", "qemu-aarch64", "-L", SYSROOT,
-              "-E", env_str, helper_path, DEFAULT_BLOB,
+              "-E", env_str, helper_path, blob ? blob : DEFAULT_BLOB,
               rate_s, ch_s, bits_s, br_s, (char *)NULL);
         _exit(127);
     }
@@ -143,7 +149,8 @@ static int service_client(int client_fd, const char *helper_path, int sample_rat
     }
 
     int32_t ready = -1;
-    if (read_full(out_fds[0], &ready, sizeof(ready)) < 0 || ready != 0) {
+    struct pollfd helper = {out_fds[0], POLLIN, 0};
+    if (poll(&helper, 1, 8000) <= 0 || read_full(out_fds[0], &ready, sizeof(ready)) < 0 || ready != 0) {
         fprintf(stderr, "sscblobd: helper not ready (ready=%d)\n", ready);
         close(in_fds[1]);
         close(out_fds[0]);
@@ -186,7 +193,7 @@ static int service_client(int client_fd, const char *helper_path, int sample_rat
         }
 
         int32_t ret = -1;
-        if (read_full(out_fds[0], &ret, sizeof(ret)) < 0) {
+        if (poll(&helper, 1, 8000) <= 0 || read_full(out_fds[0], &ret, sizeof(ret)) < 0) {
             fprintf(stderr, "sscblobd: helper pipe read failed\n");
             break;
         }
@@ -216,6 +223,10 @@ done:
 
 int main(int argc, char **argv)
 {
+    if (argc == 2 && strcmp(argv[1], "--check-managed") == 0) {
+        puts("SSC_CHECK_OK");
+        return 0;
+    }
     if (argc < 5) {
         fprintf(stderr, "usage: %s <port> <sample-rate> <channels> <bitrate> [helper-path]\n",
                 argv[0]);
@@ -226,6 +237,7 @@ int main(int argc, char **argv)
     int channels = atoi(argv[3]);
     int bitrate = atoi(argv[4]);
     const char *helper_path = argc >= 6 ? argv[5] : DEFAULT_HELPER;
+    const int managed = argc >= 7 && strcmp(argv[6], "--managed") == 0;
 
     if (port <= 0 || sample_rate <= 0 || channels <= 0 || channels > MAX_CHANNELS || bitrate <= 0) {
         fprintf(stderr, "sscblobd: bad args\n");
@@ -251,7 +263,7 @@ int main(int argc, char **argv)
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_addr.s_addr = htonl(managed ? INADDR_LOOPBACK : INADDR_ANY);
     addr.sin_port = htons((uint16_t)port);
     if (bind(sfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         perror("bind");
@@ -264,6 +276,14 @@ int main(int argc, char **argv)
     fprintf(stderr, "sscblobd: listening on 0.0.0.0:%d (rate=%d ch=%d br=%d helper=%s)\n",
             port, sample_rate, channels, bitrate, helper_path);
 
+    if (managed) {
+        fprintf(stderr, "SSC_MANAGED_READY\n");
+        struct pollfd listener = {sfd, POLLIN, 0};
+        if (poll(&listener, 1, 15000) <= 0) {
+            close(sfd);
+            return 1;
+        }
+    }
     while (!g_stop) {
         int cfd = accept(sfd, NULL, NULL);
         if (cfd < 0) {
@@ -277,6 +297,7 @@ int main(int argc, char **argv)
         (void)service_client(cfd, helper_path, sample_rate, channels, bitrate);
         close(cfd);
         fprintf(stderr, "sscblobd: client disconnected\n");
+        if (managed) break;
     }
     close(sfd);
     return 0;

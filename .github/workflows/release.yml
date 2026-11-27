@@ -78,6 +78,13 @@ jobs:
           Copy-Item README.md, LICENSE, THIRD_PARTY_LICENSES.md $dist
           Copy-Item docs/setup.md, docs/compatibility.md "$dist\docs"
           Copy-Item docs/ko/setup.md "$dist\docs\ko"
+          New-Item -ItemType Directory -Force -Path "$dist\tools\ssc_payload\build_blob", "$dist\tools\ssc_daemon" | Out-Null
+          Copy-Item tools/ssc_setup.ps1 "$dist\tools"
+          foreach ($file in 'sscblobd.c', 'ssc_blob_helper', 'libc.so', 'libdl.so', 'liblog.so', 'libm.so') {
+            Copy-Item "tools\ssc_payload\build_blob\$file" "$dist\tools\ssc_payload\build_blob"
+          }
+          Copy-Item tools/ssc_daemon/sscblobd.py, tools/ssc_daemon/qiling_patches.py "$dist\tools\ssc_daemon"
+          if (Get-ChildItem $dist -Recurse -File -Filter 'libScalable_Encoder.so') { throw 'Samsung encoder must not be included.' }
           Copy-Item tools/a760_firmware.py "$dist\tools"
           Compress-Archive -Path "$dist\*" -DestinationPath "dist\SSCOnWindows-0.2.0.zip" -Force
           Get-FileHash "dist\SSCOnWindows-0.2.0.zip" -Algorithm SHA256 |

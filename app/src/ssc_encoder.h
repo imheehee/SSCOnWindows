@@ -18,6 +18,7 @@
 #include "ssc_encode_backend.h"
 #include <cstdint>
 #include <memory>
+#include <string>
 
 class SscEncoder : public AudioEncoder {
 public:
@@ -76,12 +77,16 @@ public:
         return recovery_count_;
     }
 
+    const std::string &last_error() const {
+        return last_error_;
+    }
     void shutdown() override;
 
 private:
     /* Pick a bitrate for the given sample rate + quality. */
     uint32_t pick_bitrate(EncoderQuality quality, uint32_t sample_rate) const;
 
+    std::string last_error_;
     bool initialized_ = false;
     bool native_daemon_ = false;
     uint32_t bitrate_kbps_ = 0;
