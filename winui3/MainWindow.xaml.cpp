@@ -617,7 +617,7 @@ namespace winrt::A2DPWBWinUI::implementation
     {
         if (!service_ || a760Busy_ || sscBusy_ || service_->is_scanning()) return;
 
-        AppendLog("Scanning for Bluetooth audio devices (BTstack inquiry ~8s)...");
+        AppendLog(UiText("Scanning for Bluetooth audio devices (about 8 seconds)…", "Bluetooth 오디오 장치를 검색하고 있습니다. 약 8초 걸립니다."));
         ScanButton().IsEnabled(false);
         DeviceListView().Items().Clear();
         hasSelectedDevice_ = false;
@@ -1171,18 +1171,18 @@ namespace winrt::A2DPWBWinUI::implementation
         health += "  -  ";
         std::string why;
         auto why_add = [&why](const char* s) {
-            if (!why.empty()) why += "; ";
+            if (!why.empty()) why += " / ";
             why += s;
         };
         if (stats.frame_budget_ms > 0 && stats.encode_mean_ms > stats.frame_budget_ms)
             why_add(UiText("mean encode time exceeds the frame budget", "평균 인코딩 시간이 프레임 시간보다 깁니다"));
         if (stats.error_rate >= 0.01)
-            why_add("send errors");
+            why_add(UiText("send errors", "전송 오류"));
         if (stats.loss_rate >= 0.005)
-            why_add("audio dropped");
+            why_add(UiText("audio dropped", "오디오 프레임 손실"));
         if (stats.queue_depth >= 8)
-            why_add("transport queue backing up");
-        health += why.empty() ? "no dropped frames or send errors" : why;
+            why_add(UiText("encoded packets accumulating", "인코딩된 패킷이 대기열에 쌓입니다"));
+        health += why.empty() ? UiText("No dropped frames or send errors", "프레임 손실과 전송 오류가 없습니다") : why;
         StreamHealthText().Text(AToW(health));
         if (auto brush = TagBrush(tone == LogTag::Ok    ? L"TagOkBrush"
                                  : tone == LogTag::Warn  ? L"TagWarnBrush"

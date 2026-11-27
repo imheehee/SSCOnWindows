@@ -221,6 +221,7 @@ bool BtStackTransport::init(const char *usb_path) {
                                   (LPTHREAD_START_ROUTINE)btstack_thread_proc, this, 0, nullptr);
     if (!thread_handle_) {
         fprintf(stderr, "BTstack: Failed to create run loop thread\n");
+        running_.store(false);
         instance_ = nullptr;
         return false;
     }
@@ -468,12 +469,30 @@ unsigned long __stdcall BtStackTransport::btstack_thread_proc(void *param) {
         }
     }
 
+    btstack_data_source_t media_source{};
+    self->media_waitable_timer_ = CreateWaitableTimerExW(nullptr, nullptr,
+                                                         CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                                         TIMER_MODIFY_STATE | SYNCHRONIZE);
+    if (self->media_waitable_timer_) {
+        btstack_run_loop_set_data_source_handle(&media_source, self->media_waitable_timer_);
+        btstack_run_loop_set_data_source_handler(&media_source, [](btstack_data_source_t *, btstack_data_source_callback_type_t) {
+            instance_->media_timer_pending_ = false;
+            instance_->request_media_when_due();
+        });
+        btstack_run_loop_enable_data_source_callbacks(&media_source, DATA_SOURCE_CALLBACK_READ);
+        btstack_run_loop_add_data_source(&media_source);
+    }
+
     /* Run the event loop (blocks until shutdown) */
     btstack_run_loop_execute();
+    self->reset_media_playout();
+    if (self->media_waitable_timer_) {
+        btstack_run_loop_remove_data_source(&media_source);
+        CloseHandle(self->media_waitable_timer_);
+        self->media_waitable_timer_ = nullptr;
+    }
 
-    /* Run loop has exited. Do NOT call hci_power_control/hci_close here —
-     * they need the run loop to process HCI commands and will block.
-     * Global cleanup (deinit) is handled by shutdown() after this thread exits. */
+    /* shutdown() owns the protocol and WinUSB objects after joining this thread. */
     fprintf(stderr, "BTstack: run loop exited, thread finishing\n");
     fflush(stderr);
 
@@ -579,8 +598,10 @@ void BtStackTransport::shutdown() {
             WaitForSingleObject(power_off.done_event, 3000);
         }
 
-        /* Wait for HCI_STATE_OFF event (signals init_event_) */
-        WaitForSingleObject(init_event_, 5000);
+        /* The same event also signals startup, so verify state after waking. */
+        const auto timeout = GetTickCount64() + 5000;
+        while (hci_ready_.load() && GetTickCount64() < timeout)
+            WaitForSingleObject(init_event_, 100);
         fprintf(stderr, "BTstack: HCI powered off\n");
         fflush(stderr);
     }
@@ -590,13 +611,28 @@ void BtStackTransport::shutdown() {
     connected_.store(false);
     hci_ready_.store(false);
 
-    /* Request BTstack run loop to exit */
-    btstack_run_loop_trigger_exit();
+    /* Exit from a queued callback so an idle Windows run loop wakes up. */
+    btstack_context_callback_registration_t exit_request{};
+    exit_request.callback = [](void *) { btstack_run_loop_trigger_exit(); };
+    if (WaitForSingleObject(thread_handle_, 0) == WAIT_TIMEOUT)
+        btstack_run_loop_execute_on_main_thread(&exit_request);
 
     if (thread_handle_) {
-        WaitForSingleObject(thread_handle_, a760_firmware_.device_path().empty() ? 10000 : INFINITE);
+        WaitForSingleObject(thread_handle_, INFINITE);
         CloseHandle(thread_handle_);
         thread_handle_ = nullptr;
+        hci_close();
+        hci_transport_usb_instance()->close();
+        avrcp_target_deinit();
+        avrcp_controller_deinit();
+        avrcp_deinit();
+        a2dp_source_deinit();
+        sdp_deinit();
+        l2cap_deinit();
+        btstack_run_loop_deinit();
+        btstack_memory_deinit();
+        if (!hci_dump_file_.empty()) hci_dump_windows_fs_close();
+        hci_dump_init(nullptr);
     }
 
     if (power_off.done_event) CloseHandle(power_off.done_event);
@@ -965,9 +1001,7 @@ bool BtStackTransport::configure_codec(AudioCodec codec, uint32_t sample_rate, u
 bool BtStackTransport::disconnect() {
     if (a2dp_cid_ == 0) return true;
 
-    if (streaming_.load()) {
-        stop_stream();
-    }
+    streaming_.store(false);
 
     /* Dispatch a2dp_source_disconnect to BTstack thread */
     ResetEvent(static_cast<HANDLE>(disconnect_event_));
@@ -1089,6 +1123,7 @@ bool BtStackTransport::stop_stream() {
 
 void BtStackTransport::reset_media_playout() {
     if (media_timer_pending_) {
+        if (media_waitable_timer_) CancelWaitableTimer(media_waitable_timer_);
         btstack_run_loop_remove_timer(static_cast<btstack_timer_source_t *>(media_timer_));
         media_timer_pending_ = false;
     }
@@ -1109,10 +1144,25 @@ void BtStackTransport::request_media_when_due() {
         if (!media_queue_count_.load()) return;
         timestamp = media_queue_[media_queue_tail_].timestamp;
     }
-    const auto now = GetTickCount64();
+    static const auto frequency = [] {
+        LARGE_INTEGER value{};
+        QueryPerformanceFrequency(&value);
+        return value.QuadPart;
+    }();
+    LARGE_INTEGER counter{};
+    QueryPerformanceCounter(&counter);
+    const uint64_t now = counter.QuadPart * 1000 / frequency;
     const auto due = media_clock_.due(timestamp, sample_rate_, now, playout_buffer_ms_);
     playout_stalls_.store(media_clock_.stalls());
     if (due > now) {
+        if (media_waitable_timer_) {
+            LARGE_INTEGER interval{};
+            interval.QuadPart = -static_cast<int64_t>(due - now) * 10000;
+            if (SetWaitableTimer(media_waitable_timer_, &interval, 0, nullptr, nullptr, FALSE)) {
+                media_timer_pending_ = true;
+                return;
+            }
+        }
         auto *timer = static_cast<btstack_timer_source_t *>(media_timer_);
         btstack_run_loop_set_timer_context(timer, this);
         btstack_run_loop_set_timer_handler(timer, [](btstack_timer_source_t *source) {

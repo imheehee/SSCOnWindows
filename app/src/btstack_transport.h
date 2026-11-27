@@ -377,6 +377,7 @@ private:
     void request_media_when_due();
     void reset_media_playout();
     void *media_timer_ = nullptr;
+    void *media_waitable_timer_ = nullptr;
     bool media_timer_pending_ = false;
     bool media_can_send_pending_ = false;
     uint32_t playout_buffer_ms_ = 36;
