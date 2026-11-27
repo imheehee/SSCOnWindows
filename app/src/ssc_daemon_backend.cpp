@@ -22,6 +22,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <bcrypt.h>
 #include <ws2tcpip.h>
 #include <winsock2.h>
 #endif
@@ -125,6 +126,41 @@ std::string run_check(const std::wstring &command, const char *failure) {
     return std::string(failure) + "\n" + output;
 }
 
+std::string session_token() {
+    std::array<UCHAR, 16> random{};
+    if (BCryptGenRandom(nullptr, random.data(), static_cast<ULONG>(random.size()),
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0) return {};
+    constexpr char hex[] = "0123456789abcdef";
+    std::string token;
+    for (const auto byte : random) {
+        token += hex[byte >> 4];
+        token += hex[byte & 15];
+    }
+    return token;
+}
+
+bool receive_exact(SOCKET socket, void *buffer, size_t size) {
+    auto *out = static_cast<char *>(buffer);
+    while (size) {
+        const int n = recv(socket, out, static_cast<int>(size), 0);
+        if (n <= 0) return false;
+        out += n;
+        size -= static_cast<size_t>(n);
+    }
+    return true;
+}
+
+bool send_exact(SOCKET socket, const void *buffer, size_t size) {
+    const auto *data = static_cast<const char *>(buffer);
+    while (size) {
+        const int n = send(socket, data, static_cast<int>(size), 0);
+        if (n <= 0) return false;
+        data += n;
+        size -= static_cast<size_t>(n);
+    }
+    return true;
+}
+
 bool connect_to_daemon(SOCKET sock, const sockaddr_in &address) {
     u_long mode = 1;
     if (ioctlsocket(sock, FIONBIO, &mode) != 0) return false;
@@ -204,16 +240,17 @@ std::string DaemonSscBackend::diagnose() {
     return report;
 }
 
-std::wstring DaemonSscBackend::daemon_command() const {
+std::wstring DaemonSscBackend::daemon_command(const std::string &token) const {
+    const std::wstring wide_token(token.begin(), token.end());
     const auto args = std::to_wstring(kDaemonPort) + L" " + std::to_wstring(sample_rate_) + L" " +
                       std::to_wstring(channels_) + L" " + std::to_wstring(bitrate_bps_);
     if (native_) {
         const wchar_t *override_path = _wgetenv(L"SSC_DAEMON_PY");
         const auto script = override_path && *override_path ? std::filesystem::path(override_path)
                                                             : ssc_native_dir() / L"sscblobd.py";
-        return L"py -3.14 -u " + ssc_quote(script.wstring()) + L" " + args + L" --managed";
+        return L"py -3.14 -u " + ssc_quote(script.wstring()) + L" " + args + L" --managed " + wide_token;
     }
-    return ssc_wsl_command() + L" --exec bash -c " + ssc_quote(L"cd ~/ssc/openssc/build_blob && export SSCENC_BLOB_SO=~/ssc/blob/libScalable_Encoder.so SSC_SHIM_DIR=\"$PWD\" && exec ./sscblobd " + args + L" \"$PWD/ssc_blob_helper\" --managed");
+    return ssc_wsl_command() + L" --exec bash -c " + ssc_quote(L"cd ~/ssc/openssc/build_blob && export SSCENC_BLOB_SO=~/ssc/blob/libScalable_Encoder.so SSC_SHIM_DIR=\"$PWD\" && exec ./sscblobd " + args + L" \"$PWD/ssc_blob_helper\" --managed " + wide_token);
 }
 
 bool DaemonSscBackend::start_daemon() {
@@ -231,7 +268,8 @@ bool DaemonSscBackend::start_daemon() {
         shutdown();
         return false;
     }
-    if (!launch(daemon_command(), process_, job_, daemon_log_)) {
+    const auto token = session_token();
+    if (token.empty() || !launch(daemon_command(token), process_, job_, daemon_log_)) {
         last_error_ = "SSC_DEP_START: daemon process";
         shutdown();
         return false;
@@ -255,11 +293,20 @@ bool DaemonSscBackend::start_daemon() {
             setsockopt(sock_, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char *>(&one), sizeof(one));
             setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char *>(&timeout), sizeof(timeout));
             setsockopt(sock_, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char *>(&timeout), sizeof(timeout));
+            std::array<char, 32> peer{};
+            if (!receive_exact(sock_, peer.data(), peer.size()) ||
+                !std::equal(peer.begin(), peer.end(), token.begin(), token.end())) {
+                last_error_ = "SSC_DEP_PORT: session ownership check failed at TCP 20248";
+                shutdown();
+                return false;
+            }
             connected_ = true;
-            std::array<int32_t, kFrameSamples * 2> silence{};
+            std::array<int32_t, kFrameSamples * 2> pcm{};
+            for (size_t i = 0; i < pcm.size(); ++i)
+                pcm[i] = (static_cast<int32_t>((i / 2) % 44) - 22) * 100000;
             std::array<uint8_t, kMaxEncodeBytes> frame{};
             size_t encoded = 0;
-            if (channels_ <= 2 && encode(silence.data(), kFrameSamples, channels_, frame.data(), frame.size(), &encoded) && encoded)
+            if (channels_ <= 2 && encode(pcm.data(), kFrameSamples, channels_, frame.data(), frame.size(), &encoded) && encoded)
                 return true;
             last_error_ = "SSC_DEP_ENCODE: helper did not return an SSC frame\n" + log_tail(daemon_log_);
             shutdown();
@@ -312,29 +359,16 @@ bool DaemonSscBackend::encode(const int32_t *pcm, size_t frames, size_t channels
 
     /* frame_samples LE + 32-bit interleaved PCM (24-bit, 2^29 scale) */
     uint32_t frame_samples = static_cast<uint32_t>(frames);
-    int r;
-    r = send(sock_, reinterpret_cast<const char *>(&frame_samples), 4, 0);
-    if (r != 4) return false;
-    r = send(sock_, reinterpret_cast<const char *>(pcm), expect_bytes, 0);
-    if (r != static_cast<int>(expect_bytes)) return false;
+    if (!send_exact(sock_, &frame_samples, sizeof(frame_samples)) ||
+        !send_exact(sock_, pcm, expect_bytes)) return false;
     QueryPerformanceCounter(&eq);
 
     int32_t ret = 0;
-    size_t got = 0;
-    while (got < 4) {
-        int n = recv(sock_, reinterpret_cast<char *>(&ret) + got, 4 - got, 0);
-        if (n <= 0) return false;
-        got += static_cast<size_t>(n);
-    }
+    if (!receive_exact(sock_, &ret, sizeof(ret))) return false;
     QueryPerformanceCounter(&sfq);
-    if (ret <= 0 || ret > static_cast<int32_t>(kMaxEncodeBytes)) return false;
-    if (static_cast<size_t>(ret) > out_cap) return false;
-    got = 0;
-    while (got < static_cast<size_t>(ret)) {
-        int n = recv(sock_, reinterpret_cast<char *>(out) + got, ret - got, 0);
-        if (n <= 0) return false;
-        got += static_cast<size_t>(n);
-    }
+    if (ret <= 0 || ret > static_cast<int32_t>(kMaxEncodeBytes) ||
+        static_cast<size_t>(ret) > out_cap || !receive_exact(sock_, out, static_cast<size_t>(ret)))
+        return false;
     QueryPerformanceCounter(&fq);
 
     static double max_total = 0.0;
@@ -382,7 +416,7 @@ void DaemonSscBackend::request_shutdown() {
 #ifdef _WIN32
     if (sock_ != INVALID_SOCKET && connected_) {
         uint32_t magic = kCmdShutdown;
-        (void)send(sock_, reinterpret_cast<const char *>(&magic), 4, 0);
+        (void)send_exact(sock_, &magic, sizeof(magic));
     }
 #endif
 }

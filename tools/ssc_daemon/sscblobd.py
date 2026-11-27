@@ -133,7 +133,8 @@ class HelperBridge:
             self._out_r = None
 
 
-def run_daemon(port, sample_rate, channels, bitrate, managed=False):
+def run_daemon(port, sample_rate, channels, bitrate, token=None):
+    managed = token is not None
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     if managed and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
@@ -156,6 +157,8 @@ def run_daemon(port, sample_rate, channels, bitrate, managed=False):
         conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         print("sscblobd(py): client connected", flush=True)
         try:
+            if token is not None:
+                conn.sendall(token.encode("ascii"))
             if service_client(conn, sample_rate, channels, bitrate):
                 print("sscblobd(py): CMD_SHUTDOWN received, exiting", flush=True)
                 srv.close()
@@ -269,7 +272,14 @@ def main():
     rate = int(sys.argv[2])
     ch = int(sys.argv[3])
     br = int(sys.argv[4])
-    run_daemon(port, rate, ch, br, managed="--managed" in sys.argv[5:])
+    token = None
+    if "--managed" in sys.argv[5:]:
+        if len(sys.argv) != 7 or sys.argv[5] != "--managed":
+            sys.exit("managed mode needs a 32-character session token")
+        token = sys.argv[6]
+        if len(token) != 32 or any(c not in "0123456789abcdef" for c in token):
+            sys.exit("invalid session token")
+    run_daemon(port, rate, ch, br, token=token)
 
 
 if __name__ == "__main__":

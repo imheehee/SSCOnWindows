@@ -52,7 +52,7 @@ private:
     /* (Re)start the daemon and connect to it for the configured stream. */
     bool start_daemon();
 
-    std::wstring daemon_command() const;
+    std::wstring daemon_command(const std::string &token) const;
     std::string preflight();
     std::string last_error_;
     bool winsock_started_ = false;

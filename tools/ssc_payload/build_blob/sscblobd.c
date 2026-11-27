@@ -238,6 +238,10 @@ int main(int argc, char **argv)
     int bitrate = atoi(argv[4]);
     const char *helper_path = argc >= 6 ? argv[5] : DEFAULT_HELPER;
     const int managed = argc >= 7 && strcmp(argv[6], "--managed") == 0;
+    const char *token = managed && argc == 8 ? argv[7] : NULL;
+    if (managed && (!token || strlen(token) != 32 || strspn(token, "0123456789abcdef") != 32))
+        return 2;
+    signal(SIGPIPE, SIG_IGN);
 
     if (port <= 0 || sample_rate <= 0 || channels <= 0 || channels > MAX_CHANNELS || bitrate <= 0) {
         fprintf(stderr, "sscblobd: bad args\n");
@@ -294,7 +298,8 @@ int main(int argc, char **argv)
         fprintf(stderr, "sscblobd: client connected\n");
         int one2 = 1;
         (void)setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &one2, sizeof(one2));
-        (void)service_client(cfd, helper_path, sample_rate, channels, bitrate);
+        if (!managed || write_full(cfd, token, 32) == 0)
+            (void)service_client(cfd, helper_path, sample_rate, channels, bitrate);
         close(cfd);
         fprintf(stderr, "sscblobd: client disconnected\n");
         if (managed) break;
