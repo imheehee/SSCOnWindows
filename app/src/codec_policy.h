@@ -94,6 +94,37 @@ inline constexpr uint32_t kUhqBitratesBps[] = {
     886000,
 };
 
+// A zero rate mask is used by existing HiFi/UHQ endpoints as an implicit 48 kHz base.
+inline constexpr uint8_t SSC_RATE_44100 = 0x20;
+inline constexpr uint8_t SSC_RATE_48000 = 0x10;
+inline constexpr uint8_t SSC_RATE_MASK = 0xf0;
+inline constexpr uint8_t SSC_LIMITED = 0x08;
+inline constexpr uint8_t SSC_HIFI = 0x04;
+inline constexpr uint8_t SSC_UHQ = 0x02;
+
+inline uint32_t ssc_capture_rate(uint8_t capability, uint32_t requested) {
+    const bool has_44100 = (capability & SSC_RATE_44100) != 0;
+    if (has_44100 && (requested == 44100 || !(capability & SSC_RATE_48000))) return 44100;
+    return 48000;
+}
+
+inline uint8_t ssc_configuration(uint8_t capability, uint32_t rate) {
+    if (rate == 96000)
+        return (capability & (SSC_HIFI | SSC_UHQ)) == (SSC_HIFI | SSC_UHQ)
+                   ? SSC_LIMITED | SSC_HIFI | SSC_UHQ
+                   : 0;
+    if (rate == 44100)
+        return capability & SSC_RATE_44100 ? SSC_RATE_44100 | SSC_LIMITED : 0;
+    if (rate != 48000) return 0;
+    if ((capability & SSC_RATE_MASK) && !(capability & SSC_RATE_48000)) return 0;
+    if (capability & SSC_HIFI || capability == 0) return SSC_LIMITED | SSC_HIFI;
+    return SSC_RATE_48000 | SSC_LIMITED;
+}
+
+inline bool ssc_legacy_mode(uint8_t configuration) {
+    return (configuration & SSC_RATE_MASK) && !(configuration & SSC_HIFI);
+}
+
 /* SSC UHQ rates encode at 96 kHz (2x SRC from the 48 kHz capture). */
 inline bool is_uhq_rate(uint32_t sample_rate) {
     return sample_rate == 88200 || sample_rate == 96000;

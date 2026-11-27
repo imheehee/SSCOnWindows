@@ -50,7 +50,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $dist = 'dist\SSCOnWindows-0.2.0'
-          New-Item -ItemType Directory -Force -Path "$dist\wx", "$dist\winui", "$dist\docs\ko" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$dist\wx", "$dist\winui", "$dist\docs\ko", "$dist\tools" | Out-Null
           Copy-Item 'build_msvc\app\Release\SSCOnWindows-0.2.0.exe' "$dist\wx"
           Copy-Item 'winui3\bin\x64\Release\*' "$dist\winui" -Recurse
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -78,6 +78,7 @@ jobs:
           Copy-Item README.md, LICENSE, THIRD_PARTY_LICENSES.md $dist
           Copy-Item docs/setup.md, docs/compatibility.md "$dist\docs"
           Copy-Item docs/ko/setup.md "$dist\docs\ko"
+          Copy-Item tools/a760_firmware.py "$dist\tools"
           Compress-Archive -Path "$dist\*" -DestinationPath "dist\SSCOnWindows-0.2.0.zip" -Force
           Get-FileHash "dist\SSCOnWindows-0.2.0.zip" -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash)  $([IO.Path]::GetFileName($_.Path))" } |

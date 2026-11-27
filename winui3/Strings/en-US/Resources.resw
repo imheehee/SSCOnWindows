@@ -240,10 +240,10 @@
   <data name="DriverHintText.Text" xml:space="preserve">
     <value>Streaming needs the USB dongle to use WinUSB. Stop streaming before changing the driver in Device Manager.</value>
   </data>
-  <data name="EnableStreamingButton.Content" xml:space="preserve">
+  <data name="EnableStreamingButtonLabel.Text" xml:space="preserve">
     <value>WinUSB Setup Instructions</value>
   </data>
-  <data name="RestoreBtButton.Content" xml:space="preserve">
+  <data name="RestoreBtButtonLabel.Text" xml:space="preserve">
     <value>Windows Bluetooth Restore Instructions</value>
   </data>
   <data name="A760DiagnosticsButton.Content" xml:space="preserve">

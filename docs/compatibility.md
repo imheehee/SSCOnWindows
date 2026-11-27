@@ -106,6 +106,20 @@ Keep the device address private (use `AA:BB:…:FF` or a short prefix).
   marginal at 96 kHz UHQ.
 ### ipTIME BT60XR / BT60XR-A (`0BDA:A760`, `REV_0200`)
 
-ipTIME 기술팀은 BT60XR-A를 **RTL8761B** 기반으로 확인했다. 같은 USB ID와 리비전의 공개 Linux 실측에서는 ROM이 `HCI 0x0A / HCI rev 0x000B / LMP subversion 0x8761 / ROM version 1`을 보고했다. Linux의 `btrtl`은 이 HCI/LMP 조합과 USB 전송 유형을 RTL8761BU 펌웨어 항목에 매핑한다. 공개 실측의 Linux 기본 펌웨어와 제조사 패치는 서로 다른 펌웨어 버전을 보고했다. 동일한 칩 계열에서도 제품별 펌웨어와 설정을 별도로 확인해야 한다. [ipTIME 기술팀 답변](https://iptime.com/support/qna/900295), [Linux 실측과 제조사 패치 비교](https://iptime.com/support/qna/898551), [Linux btrtl 칩 매핑](https://github.com/torvalds/linux/blob/master/drivers/bluetooth/btrtl.c)
+사용자 제공 Windows 11 실측에서 Realtek 드라이버 `20.11.3038.3001`을 쓰던 A760을 WinUSB로 전환해 한국어 WinUI와 HCI `0x1001`을 확인했다. 패치 전 식별은 `HCI 0x0A / rev 0x000B / LMP 0x0A / subver 0x8761 / manufacturer 0x005D`다. Linux에서 보고된 ROM은 `0x01`이며 기존 BTstack RTL8761BU 흐름과 같은 `0xFC6D` 명령으로 Windows에서 다시 측정할 수 있다. 이 식별값은 RTL8761B USB 계열의 근거다. [ipTIME 칩셋 답변](https://iptime.com/support/qna/900295), [Linux 측정](https://iptime.com/support/qna/898506), [Linux 칩 매핑과 epatch 코드](https://github.com/torvalds/linux/blob/master/drivers/bluetooth/btrtl.c)
 
-현재 BTstack의 `0BDA:8771` 초기화에서 재사용 후보는 HCI 버전 조회, Realtek ROM 리비전 조회, epatch 분석 및 분할 전송 순서다. 번들 BTstack에는 A760의 펌웨어 항목이 없다. Windows WinUSB에서 이 리비전의 초기화 전후 응답, 정확한 ROM 패치/설정 조합, 콜드 부팅, 재연결 및 A2DP 재생은 확인되지 않았다. 앱은 A760을 `8771`에 매핑하지 않으며 BTstack 전송에서도 모든 A760 리비전을 제외한다. 진단은 정확히 `REV_0200`을 확인한 뒤 표준 HCI 버전 조회만 수행한다. [번들 BTstack Realtek 구현](https://github.com/bluekitchen/btstack/blob/5bc5cbdbeec33be1fdbd0d50e04c0f6deab99d2d/chipset/realtek/btstack_chipset_realtek.c)
+| 펌웨어 후보 | 비교 근거 | Windows WinUSB 로드 승인 |
+|---|---|---|
+| Linux `rtl8761bu_fw.bin` | Debian `firmware-realtek 20261019-1`에서 오프라인 확인. SHA-256 `1d7a9597349ad89344fa16c1913d3e39e9a12e966e417ca16871bc79bbe59edb`, 44,484바이트, `project_id=14`, 버전 `0xDFC6D922`, ROM 1 → 칩 ID 2 패치 30,204바이트. Linux 게시물에 초기화 타임아웃과 재열거가 한 차례 보고됐다. | 대기 |
+| ipTIME/Realtek OEM 패치 | 공개 게시물 기준 29,215바이트, `project_id=14`, SHA-256 `f0437ab72b37d3ac4e3b6e9e5c22c74a0f5d21d9d276b728d7ed5461311a0ce2`. 같은 해시의 패치가 Realtek `20.11.3038.3001`에 포함됐다는 보고가 있다. Linux에서 버전 `0x2AFB4BE5`와 HCI/LMP `0x0E`를 보고했다. OEM 원본 바이트와 Windows 쪽 config는 이번 작업에서 직접 대조하지 않았다. | 대기 |
+| Linux `rtl8761bu_config.bin` | 같은 Debian 배포에서 확인한 SHA-256 `6c28a3f07c6a30ed208c4b64862a23f02b7d93543ea980edd24df16bab45095f`. 6바이트 헤더, 설정 레코드 0개. 게시물의 두 Linux 실행 모두 6바이트 config를 사용했다. A760의 OEM 설정이 이 파일과 같다는 근거는 없다. | 대기 |
+
+[Debian 원본 패키지](https://deb.debian.org/debian/pool/non-free-firmware/f/firmware-nonfree/firmware-realtek_20261019-1_all.deb) · [OEM 이미지와 Linux 비교 실측](https://iptime.com/support/qna/898555)
+
+A760에는 기존 코드의 HCI 식별과 ROM 조회 프로토콜을 적용했다. epatch의 프로젝트 ID와 ROM별 패치 선택은 오프라인 검사기로 확인할 수 있다. BTstack의 USB 대상 지정, 펌웨어·config 파일 승인, 블록 상태 확인과 최종 버전 재조회는 실제 Windows 검증이 필요한 초기화 단계다. A760은 BTstack 전송 대상에서 제외하며, 검사기의 해시 일치나 형식 검사는 업로드 권한을 부여하지 않는다. [번들 BTstack Realtek 코드](https://github.com/bluekitchen/btstack/blob/5bc5cbdbeec33be1fdbd0d50e04c0f6deab99d2d/chipset/realtek/btstack_chipset_realtek.c)
+
+### Galaxy Buds Pro SM-R190 / Buds4 Pro
+
+SM-R190용 SSC 기본 협상은 헤드셋이 광고한 44.1/48 kHz 비트를 사용한다. 44.1 kHz 기본 설정은 `0x28`, 48 kHz legacy 설정은 `0x18`이며, 기존 HiFi 가능 헤드셋의 48 kHz 설정 `0x0C`는 유지한다. legacy 모드는 최대 192 kbps로 제한한다. 캡처를 협상한 주파수로 초기화해 인코더와 동일한 PCM 속도를 사용한다. SM-R190의 실제 capability와 재생은 검증 대기다. [SSC 모드와 A2DP 설정값](https://github.com/WillyBilly06/samsung-ssc-encoder#operating-modes)
+
+Buds4 Pro의 HiFi/UHQ는 원격 vendor codec ID, SEP별 capability, 실제 SET_CONFIGURATION 응답, PCM·인코더 경로와 가청 재생을 검증한 후 별도 지원 대상으로 판정한다. 기존 SSC UHQ 경로는 장치가 광고한 기능으로 제한하며 제품명에 따른 강제 활성화는 사용하지 않는다.

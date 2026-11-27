@@ -559,7 +559,7 @@ namespace winrt::A2DPWBWinUI::implementation
         profile.bitrate_kbps = static_cast<uint32_t>(selectedBitrateKbps_);
         profile.bit_depth = ProfileManager::index_to_bit_depth(selectedBitDepthIndex_);
         profile.capture_mode = "loopback";
-        profile.sample_rate = (selectedRateIndex_ == 1) ? 96000 : 0; /* 0 = auto (48k on this rig) */
+        profile.sample_rate = SelectedSampleRate();
 
         AppendLog("Connecting to " + selectedDevice_.name + " [" + profile.codec + "]...");
         RememberLastDevice(profile.device_address, profile.device_name);
@@ -604,7 +604,7 @@ namespace winrt::A2DPWBWinUI::implementation
         profile.bitrate_kbps = static_cast<uint32_t>(selectedBitrateKbps_);
         profile.bit_depth = ProfileManager::index_to_bit_depth(selectedBitDepthIndex_);
         profile.capture_mode = "loopback";
-        profile.sample_rate = (selectedRateIndex_ == 1) ? 96000 : 0; /* 0 = auto (48k on this rig) */
+        profile.sample_rate = SelectedSampleRate();
 
         AppendLog("Direct connect to " + mac + " [" + profile.codec + "]...");
         RememberLastDevice(profile.device_address, profile.device_name);
@@ -646,6 +646,27 @@ namespace winrt::A2DPWBWinUI::implementation
     void MainWindow::OnQualityChanged(IInspectable const&, Controls::SelectionChangedEventArgs const&)
     {
         selectedQualityIndex_ = QualityCombo().SelectedIndex();
+    }
+
+    void MainWindow::OnPageSizeChanged(IInspectable const&, SizeChangedEventArgs const& args)
+    {
+        if (!DevicesPanel() || !SettingsPanel() || !DevicesColumn()) return;
+        const bool narrow = args.NewSize().Width < 760;
+        DevicesColumn().Width(narrow ? GridLength{0, GridUnitType::Auto}
+                                      : GridLength{300, GridUnitType::Pixel});
+        Grid::SetColumnSpan(DevicesPanel(), narrow ? 2 : 1);
+        Grid::SetColumn(SettingsPanel(), narrow ? 0 : 1);
+        Grid::SetColumnSpan(SettingsPanel(), narrow ? 2 : 1);
+        Grid::SetRow(SettingsPanel(), narrow ? 1 : 0);
+    }
+
+    uint32_t MainWindow::SelectedSampleRate() const
+    {
+        switch (selectedRateIndex_) {
+        case 1: return 96000;
+        case 2: return 44100;
+        default: return 48000;
+        }
     }
 
     void MainWindow::OnRateChanged(IInspectable const&, Controls::SelectionChangedEventArgs const&)
@@ -695,7 +716,7 @@ namespace winrt::A2DPWBWinUI::implementation
     {
         /* SSC bitrates are mode-gated; snap so the slider can never hand the
          * blob an unsupported value (which garbles audio). */
-        uint32_t rate = (selectedRateIndex_ == 1) ? 96000 : 48000;
+        uint32_t rate = SelectedSampleRate();
         int snapped = static_cast<int>(SscEncoder::snap_bitrate_kbps(
             static_cast<uint32_t>(requestedKbps), rate));
         selectedBitrateKbps_ = snapped;
@@ -849,7 +870,7 @@ namespace winrt::A2DPWBWinUI::implementation
         profile.bitrate_kbps = static_cast<uint32_t>(selectedBitrateKbps_);
         profile.bit_depth = ProfileManager::index_to_bit_depth(selectedBitDepthIndex_);
         profile.capture_mode = "loopback";
-        profile.sample_rate = (selectedRateIndex_ == 1) ? 96000 : 0;
+        profile.sample_rate = SelectedSampleRate();
 
         AppendLog(logText + " -> " + name + " [" + profile.codec + "]...");
         RememberLastDevice(mac, name);
@@ -1286,6 +1307,7 @@ namespace winrt::A2DPWBWinUI::implementation
         if (auto self = weak.get()) {
             self->A760DiagnosticsButton().IsEnabled(true);
             self->A760DiagnosticsResult().Text(AToW(result));
+            self->AppendLog(LogTag::Data, result);
         }
     }
 

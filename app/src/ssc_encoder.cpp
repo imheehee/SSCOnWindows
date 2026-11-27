@@ -38,7 +38,7 @@ uint32_t SscEncoder::pick_bitrate(EncoderQuality quality, uint32_t sample_rate) 
 }
 
 uint32_t SscEncoder::snap_bitrate_kbps(uint32_t kbps, uint32_t sample_rate) {
-    if (kbps == 0) return 0;            /* 0 = auto, leave untouched */
+    if (kbps == 0) return 0; /* 0 = auto, leave untouched */
     return codec_policy::snap_bitrate_bps(kbps * 1000, sample_rate) / 1000;
 }
 
@@ -83,10 +83,15 @@ bool SscEncoder::init(uint16_t mtu, EncoderQuality quality,
         if (br != req) {
             fprintf(stderr,
                     "SSC: bitrate %u bps not valid for %u Hz (mode-gated); "
-                    "snapped to %u bps\n", req, rate, br);
+                    "snapped to %u bps\n",
+                    req, rate, br);
         }
     } else {
         br = pick_bitrate(quality, sample_rate);
+    }
+    if (legacy_mode_ && br > 192000) {
+        fprintf(stderr, "SSC: legacy negotiation limits %u bps to 192000 bps\n", br);
+        br = 192000;
     }
     bitrate_kbps_ = br / 1000;
     sample_rate = rate;
@@ -116,7 +121,7 @@ bool SscEncoder::encode(const uint8_t *pcm_data, uint32_t pcm_bytes,
 
     uint32_t expect_bytes = kFrameSamples * channels_ * sizeof(int32_t);
     if (pcm_bytes < expect_bytes) {
-        return true;            /* not enough data yet, not an error */
+        return true; /* not enough data yet, not an error */
     }
 
     if (!out_data) return false;

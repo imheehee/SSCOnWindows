@@ -39,7 +39,8 @@ public:
      * buffer_ms: capture buffer duration in milliseconds (1-40, default 10) */
     static const uint32_t BUFFER_DURATION_MS = 10;
 
-    bool init(uint32_t preferred_sample_rate = 0, const wchar_t *device_id = nullptr);
+    bool init(uint32_t preferred_sample_rate = 0, const wchar_t *device_id = nullptr,
+              bool exact_sample_rate = false);
 
     /* Start capturing audio. Callback is invoked from capture thread. */
     bool start(AudioCallback callback);
@@ -48,9 +49,15 @@ public:
     void stop();
 
     /* Get capture format info */
-    uint32_t get_sample_rate() const { return sample_rate_; }
-    uint32_t get_channels() const { return channels_; }
-    uint32_t get_bits_per_sample() const { return bits_per_sample_; }
+    uint32_t get_sample_rate() const {
+        return sample_rate_;
+    }
+    uint32_t get_channels() const {
+        return channels_;
+    }
+    uint32_t get_bits_per_sample() const {
+        return bits_per_sample_;
+    }
 
     /* Mute/unmute the default render endpoint (speakers).
      * Used by the "auto-mute output" feature so loopback still captures
@@ -75,10 +82,9 @@ private:
     /* Capture thread */
     HANDLE thread_handle_ = nullptr;
     HANDLE stop_event_ = nullptr;
-    HANDLE buffer_event_ = nullptr;  /* signaled by WASAPI when data is ready */
+    HANDLE buffer_event_ = nullptr; /* signaled by WASAPI when data is ready */
     bool event_mode_ = false;
     AudioCallback callback_;
-
 };
 
 #endif /* WASAPI_CAPTURE_H */

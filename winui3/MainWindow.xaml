@@ -27,29 +27,26 @@
                                         Audio settings / Troubleshooting
         Row 3: activity log (collapsible; summary line stays visible when closed)
     -->
-    <Grid Padding="24" RowSpacing="8">
+    <ScrollViewer x:Name="PageScroller" VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled" SizeChanged="OnPageSizeChanged">
+    <Grid Padding="16" RowSpacing="8">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <!-- ===================== Header ===================== -->
-        <Grid Grid.Row="0" ColumnSpacing="12">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
+        <StackPanel Grid.Row="0" Spacing="8">
 
-            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+            <StackPanel VerticalAlignment="Center">
                 <TextBlock Style="{StaticResource TitleTextBlockStyle}" Text="SSC On Windows" />
                 <TextBlock x:Name="VersionCreditText" Style="{StaticResource CaptionTextBlockStyle}" Opacity="0.6"
                            Text="v0.2.0 &#183; by Salvetum" />
             </StackPanel>
 
-            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
-                        HorizontalAlignment="Right" VerticalAlignment="Center">
+            <VariableSizedWrapGrid Orientation="Horizontal" ItemWidth="158" ItemHeight="38">
                 <Button x:Uid="ScanButton" x:Name="ScanButton" Content="Scan Devices" Style="{StaticResource AppButtonStyle}" Click="OnScanClick"
                         ToolTipService.ToolTip="Rescan for nearby Bluetooth audio devices (~8 s)" />
                 <Button x:Uid="ConnectButton" x:Name="ConnectButton" Content="Connect" IsEnabled="False" Style="{StaticResource AppButtonStyle}" Click="OnConnectClick"
@@ -62,8 +59,8 @@
                         ToolTipService.ToolTip="Empty the activity log" />
                 <Button x:Uid="SetupButton" x:Name="SetupButton" Content="Setup &amp; Help" Style="{StaticResource AppButtonStyle}" Click="OnSetupClick"
                         ToolTipService.ToolTip="First-time pairing steps and troubleshooting FAQ" />
-            </StackPanel>
-        </Grid>
+            </VariableSizedWrapGrid>
+        </StackPanel>
 
         <!-- ===================== Status card ===================== -->
         <!-- Answers "is audio running?" and "what do I do next?" without hunting
@@ -108,14 +105,18 @@
         </Border>
 
         <!-- ===================== Main content ===================== -->
-        <Grid Grid.Row="2" ColumnSpacing="16">
+        <Grid Grid.Row="2" ColumnSpacing="12" RowSpacing="10">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="320" />
+                <ColumnDefinition x:Name="DevicesColumn" Width="300" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
             <!-- Left: connected device -->
-            <Border Grid.Column="0" Padding="12" CornerRadius="8"
+            <Border x:Name="DevicesPanel" Grid.Column="0" VerticalAlignment="Top" Padding="12" CornerRadius="8"
                     BorderBrush="{ThemeResource SystemControlForegroundBaseMediumBrush}"
                     BorderThickness="1" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                 <Grid RowSpacing="8">
@@ -127,7 +128,7 @@
 
                     <TextBlock x:Uid="ConnectedDevice" Text="Connected device" Style="{StaticResource SectionLabelTextStyle}" />
 
-                    <ListView x:Uid="DeviceListView" x:Name="DeviceListView" Grid.Row="1"
+                    <ListView x:Uid="DeviceListView" x:Name="DeviceListView" Grid.Row="1" MinHeight="96" MaxHeight="280"
                               SelectionChanged="OnDeviceSelectionChanged"
                               AutomationProperties.Name="Nearby Bluetooth audio devices"
                               ToolTipService.ToolTip="Pick a device, then press Connect" />
@@ -160,10 +161,7 @@
                 </Grid>
             </Border>
 
-            <!-- Right: scrollable sections -->
-            <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled" Margin="0,0,4,0">
-                <StackPanel Spacing="10">
+            <StackPanel x:Name="SettingsPanel" Grid.Column="1" Spacing="10">
 
                     <!-- ================= Audio status ================= -->
                     <Border Padding="12" CornerRadius="8"
@@ -239,6 +237,8 @@
                                     <ComboBoxItem Content="AAC" />
                                     <ComboBoxItem Content="SBC" />
                                 </ComboBox>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
                                 <TextBlock x:Uid="Quality" Text="Quality" Width="60" VerticalAlignment="Center" />
                                 <ComboBox x:Uid="QualityCombo" x:Name="QualityCombo" Width="140"
                                           SelectionChanged="OnQualityChanged"
@@ -258,7 +258,10 @@
                                                   ToolTipService.ToolTip="SSC standard 48 kHz" />
                                     <ComboBoxItem x:Uid="SscUhq96KhzRequires2XSrc" Content="96k"
                                                   ToolTipService.ToolTip="SSC UHQ (96 kHz, requires 2x SRC)" />
+                                    <ComboBoxItem Content="44.1 kHz" />
                                 </ComboBox>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
                                 <TextBlock x:Uid="BitDepth" Text="Bit depth" Width="72" VerticalAlignment="Center" />
                                 <ComboBox x:Uid="BitDepthCombo" x:Name="BitDepthCombo" Width="140"
                                           SelectionChanged="OnBitDepthChanged"
@@ -333,8 +336,8 @@
                     <!-- ================= Troubleshooting ================= -->
                     <Expander x:Uid="Troubleshooting" Header="Troubleshooting">
                         <StackPanel Spacing="8" Margin="0,8,0,0">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <TextBlock x:Uid="DriverStateText" x:Name="DriverStateText" Text="Detecting..."
+                            <StackPanel Spacing="8">
+                                <TextBlock TextWrapping="Wrap" x:Uid="DriverStateText" x:Name="DriverStateText" Text="Detecting..."
                                            VerticalAlignment="Center" FontWeight="SemiBold" />
                                 <Button x:Uid="RefreshDriverButton" x:Name="RefreshDriverButton" Content="Refresh"
                                         Style="{StaticResource AppButtonStyle}"
@@ -346,15 +349,19 @@
                             <TextBlock x:Uid="DriverHintText" x:Name="DriverHintText"
                                        Text="Streaming needs the USB dongle to use WinUSB. Stop streaming before changing the driver in Device Manager."
                                        Style="{StaticResource HintGrayTextStyle}" TextWrapping="Wrap" />
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <Button x:Uid="EnableStreamingButton" x:Name="EnableStreamingButton"
-                                        Content="WinUSB Setup Instructions"
+                            <StackPanel Spacing="8">
+                                <Button x:Name="EnableStreamingButton"
+                                        HorizontalAlignment="Left"
                                         Style="{StaticResource AppButtonStyle}"
-                                        Click="OnEnableStreamingClick" />
-                                <Button x:Uid="RestoreBtButton" x:Name="RestoreBtButton"
-                                        Content="Windows Bluetooth Restore Instructions"
+                                        Click="OnEnableStreamingClick">
+                                    <TextBlock x:Uid="EnableStreamingButtonLabel" Text="WinUSB Setup Instructions" TextWrapping="Wrap" />
+                                </Button>
+                                <Button x:Name="RestoreBtButton"
+                                        HorizontalAlignment="Left"
                                         Style="{StaticResource AppButtonStyle}"
-                                        Click="OnRestoreBtClick" />
+                                        Click="OnRestoreBtClick">
+                                    <TextBlock x:Uid="RestoreBtButtonLabel" Text="Windows Bluetooth Restore Instructions" TextWrapping="Wrap" />
+                                </Button>
                             </StackPanel>
                             <Button x:Uid="A760DiagnosticsButton" x:Name="A760DiagnosticsButton" Content="A760 HCI diagnostics"
                                     Style="{StaticResource AppButtonStyle}" Click="OnA760DiagnosticsClick" />
@@ -364,8 +371,7 @@
                                        Style="{StaticResource HintGrayTextStyle}" TextWrapping="Wrap" />
                         </StackPanel>
                     </Expander>
-                </StackPanel>
-            </ScrollViewer>
+            </StackPanel>
         </Grid>
 
         <!-- ===================== Activity log (collapsible) ===================== -->
@@ -404,4 +410,5 @@
             </Border>
         </Grid>
     </Grid>
+    </ScrollViewer>
 </Window>

@@ -24,8 +24,12 @@ public:
     SscEncoder();
     ~SscEncoder() override;
 
-    AudioCodec codec_type() const override { return AudioCodec::SSC; }
-    const char *codec_name() const override { return "SSC"; }
+    AudioCodec codec_type() const override {
+        return AudioCodec::SSC;
+    }
+    const char *codec_name() const override {
+        return "SSC";
+    }
 
     bool init(uint16_t mtu, EncoderQuality quality,
               uint32_t sample_rate, uint32_t channels) override;
@@ -34,12 +38,21 @@ public:
                 uint8_t *out_data, uint32_t *out_size,
                 uint32_t *out_frames) override;
 
-    uint32_t get_pcm_frames_per_encode() const override { return 864; }
+    uint32_t get_pcm_frames_per_encode() const override {
+        return 864;
+    }
 
-    uint32_t get_bitrate_kbps() const override { return bitrate_kbps_; }
+    uint32_t get_bitrate_kbps() const override {
+        return bitrate_kbps_;
+    }
 
     /* Override the auto bitrate picked from quality (0 = auto). Call before init(). */
-    void set_bitrate_override(uint32_t kbps) { bitrate_override_kbps_ = kbps; }
+    void set_legacy_mode(bool enabled) {
+        legacy_mode_ = enabled;
+    }
+    void set_bitrate_override(uint32_t kbps) {
+        bitrate_override_kbps_ = kbps;
+    }
 
     /* Snap a requested kbps to the nearest bitrate valid for the given sample
      * rate. SSC bitrates are mode-gated: 48 kHz (basic) allows 88..328 kbps,
@@ -49,7 +62,9 @@ public:
 
     /* Use the Windows-native Qiling daemon (tools\\ssc_daemon\\sscblobd.py)
      * instead of the WSL2/qemu daemon. Call before init(). */
-    void set_native_daemon(bool enabled) { native_daemon_ = enabled; }
+    void set_native_daemon(bool enabled) {
+        native_daemon_ = enabled;
+    }
 
     /* Watchdog: restart the daemon and reconnect after a transport
      * failure. Internally triggered on encode() failures and rate-limited
@@ -57,7 +72,9 @@ public:
     bool recover();
 
     /* Number of successful daemon recoveries (watchdog resets). */
-    uint32_t get_recovery_count() const { return recovery_count_; }
+    uint32_t get_recovery_count() const {
+        return recovery_count_;
+    }
 
     void shutdown() override;
 
@@ -68,6 +85,7 @@ private:
     bool initialized_ = false;
     bool native_daemon_ = false;
     uint32_t bitrate_kbps_ = 0;
+    bool legacy_mode_ = false;
     uint32_t bitrate_override_kbps_ = 0;
     uint32_t channels_ = 2;
     uint64_t next_recovery_ms_ = 0;

@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <winusb.h>
 
+#include <array>
 #include <cstdio>
 #include <memory>
 
@@ -27,18 +28,97 @@ bool finish_transfer(BOOL completed, HANDLE device, WINUSB_INTERFACE_HANDLE usb,
                      OVERLAPPED &io, ULONG &size, DWORD timeout) {
     if (completed) return true;
     if (GetLastError() != ERROR_IO_PENDING) return false;
-    if (WaitForSingleObject(io.hEvent, timeout) == WAIT_OBJECT_0)
+    const DWORD wait = WaitForSingleObject(io.hEvent, timeout);
+    if (wait == WAIT_OBJECT_0)
         return WinUsb_GetOverlappedResult(usb, &io, &size, FALSE) != FALSE;
 
     // Drain the cancelled I/O before its OVERLAPPED and buffer leave scope.
+    const DWORD error = wait == WAIT_TIMEOUT ? ERROR_TIMEOUT : GetLastError();
     CancelIoEx(device, &io);
     WinUsb_GetOverlappedResult(usb, &io, &size, TRUE);
+    SetLastError(error);
     return false;
 }
 
 unsigned le16(const UCHAR *data) {
     return data[0] | (static_cast<unsigned>(data[1]) << 8);
 }
+struct HciReply {
+    enum class Result { Complete,
+                        SendFailed,
+                        ReadFailed,
+                        Timeout } result = Result::Timeout;
+    std::array<UCHAR, 257> bytes{};
+    ULONG size = 0;
+    DWORD error = ERROR_SUCCESS;
+};
+
+HciReply read_hci(uint16_t opcode, HANDLE device, WINUSB_INTERFACE_HANDLE usb,
+                  UCHAR pipe, HANDLE event) {
+    HciReply reply;
+    UCHAR command[] = {static_cast<UCHAR>(opcode), static_cast<UCHAR>(opcode >> 8), 0};
+    WINUSB_SETUP_PACKET setup{0x20, 0, 0, 0, sizeof(command)};
+    ResetEvent(event);
+    OVERLAPPED io{};
+    io.hEvent = event;
+    ULONG sent = 0;
+    if (!finish_transfer(WinUsb_ControlTransfer(usb, setup, command, sizeof(command), &sent, &io),
+                         device, usb, io, sent, 1000)) {
+        reply.result = HciReply::Result::SendFailed;
+        reply.error = GetLastError();
+        return reply;
+    }
+    if (sent != sizeof(command)) {
+        reply.result = HciReply::Result::SendFailed;
+        reply.error = ERROR_BAD_LENGTH;
+        return reply;
+    }
+
+    const ULONGLONG deadline = GetTickCount64() + 2000;
+    for (auto now = GetTickCount64(); now < deadline; now = GetTickCount64()) {
+        ResetEvent(event);
+        io = {};
+        io.hEvent = event;
+        if (!finish_transfer(WinUsb_ReadPipe(usb, pipe, reply.bytes.data(),
+                                             static_cast<ULONG>(reply.bytes.size()), &reply.size, &io),
+                             device, usb, io, reply.size, static_cast<DWORD>(deadline - now))) {
+            reply.result = HciReply::Result::ReadFailed;
+            reply.error = GetLastError();
+            return reply;
+        }
+        const auto *p = reply.bytes.data();
+        if (reply.size >= 6 && reply.size == 2u + p[1] && p[0] == 0x0e && le16(p + 3) == opcode) {
+            reply.result = HciReply::Result::Complete;
+            return reply;
+        }
+    }
+    return reply;
+}
+
+std::string hci_failure(uint16_t opcode, const HciReply &reply, bool korean) {
+    const char *phase = korean ? "응답 시간 초과" : "response timeout";
+    switch (reply.result) {
+    case HciReply::Result::SendFailed:
+        phase = korean ? "전송 실패" : "send failed";
+        break;
+    case HciReply::Result::ReadFailed:
+        phase = korean ? "응답 읽기 실패" : "read failed";
+        break;
+    case HciReply::Result::Complete:
+        phase = reply.bytes[5] ? (korean ? "컨트롤러 오류" : "controller error")
+                               : (korean ? "잘못된 응답 길이" : "unexpected response length");
+        break;
+    case HciReply::Result::Timeout:
+        break;
+    }
+    char details[192];
+    snprintf(details, sizeof(details), "HCI 0x%04X: %s (Win32=%lu, status=0x%02X, bytes=%lu)",
+             static_cast<unsigned>(opcode), phase, reply.error,
+             reply.result == HciReply::Result::Complete ? static_cast<unsigned>(reply.bytes[5]) : 0u,
+             reply.size);
+    return details;
+}
+
 } // namespace
 
 std::string diagnose_a760(bool korean) {
@@ -104,38 +184,44 @@ std::string diagnose_a760(bool korean) {
     const FileHandle event(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     if (!event_pipe || !event) return report + unavailable;
 
-    UCHAR command[] = {0x01, 0x10, 0x00};
-    WINUSB_SETUP_PACKET setup{0x20, 0, 0, 0, sizeof(command)};
-    OVERLAPPED io{};
-    io.hEvent = event.get();
-    if (!finish_transfer(WinUsb_ControlTransfer(handle, setup, command, sizeof(command), &size, &io),
-                         raw, handle, io, size, 1000) ||
-        size != sizeof(command)) {
-        return report + tr("Could not send HCI command 0x1001.", "HCI 명령 0x1001 전송에 실패했습니다.");
-    }
+    constexpr uint16_t local_version = 0x1001;
+    const auto version = read_hci(local_version, raw, handle, event_pipe, event.get());
+    if (version.result != HciReply::Result::Complete || version.bytes[5] || version.size != 14)
+        return report + hci_failure(local_version, version, korean);
 
-    const ULONGLONG deadline = GetTickCount64() + 2000;
-    for (auto now = GetTickCount64(); now < deadline; now = GetTickCount64()) {
-        UCHAR reply[257]{};
-        ResetEvent(event.get());
-        io = {};
-        io.hEvent = event.get();
-        if (!finish_transfer(WinUsb_ReadPipe(handle, event_pipe, reply, sizeof(reply), &size, &io),
-                             raw, handle, io, size, static_cast<DWORD>(deadline - now))) break;
-        if (size < 6 || size != 2u + reply[1] || reply[0] != 0x0e || le16(reply + 3) != 0x1001)
-            continue;
-        if (reply[5]) {
-            char result[32];
-            snprintf(result, sizeof(result), "0x%02X", static_cast<unsigned>(reply[5]));
-            return report + tr("HCI status: ", "HCI 상태: ") + result;
-        }
-        if (size != 14) break;
-        char version[160];
-        snprintf(version, sizeof(version),
-                 "HCI=0x%02X rev=0x%04X | LMP=0x%02X subver=0x%04X | Manufacturer=0x%04X",
-                 static_cast<unsigned>(reply[6]), le16(reply + 7), static_cast<unsigned>(reply[9]),
-                 le16(reply + 12), le16(reply + 10));
-        return report + version;
-    }
-    return report + tr("No valid HCI 0x1001 response.", "유효한 HCI 0x1001 응답을 받지 못했습니다.");
+    const auto *reply = version.bytes.data();
+    const auto manufacturer = le16(reply + 10);
+    const auto revision = le16(reply + 7);
+    const auto subversion = le16(reply + 12);
+    char details[160];
+    snprintf(details, sizeof(details),
+             "HCI=0x%02X rev=0x%04X | LMP=0x%02X subver=0x%04X | Manufacturer=0x%04X",
+             static_cast<unsigned>(reply[6]), revision, static_cast<unsigned>(reply[9]),
+             subversion, manufacturer);
+    report += details;
+    report += '\n';
+
+    const bool expected_identity = reply[6] == 0x0a && revision == 0x000b &&
+                                   reply[9] == 0x0a && subversion == 0x8761 && manufacturer == 0x005d;
+    if (!expected_identity)
+        return report + tr("ROM query skipped: expected the unpatched RTL8761BU identity.",
+                           "ROM 조회 생략: 패치 전 RTL8761BU 식별값과 일치하지 않습니다.");
+
+    // Same read-only Realtek vendor opcode used in BTstack phase 2 and Linux btrtl.
+    constexpr uint16_t rom_version = 0xfc6d;
+    const auto rom = read_hci(rom_version, raw, handle, event_pipe, event.get());
+    if (rom.result != HciReply::Result::Complete || rom.bytes[5] || rom.size != 7)
+        return report + hci_failure(rom_version, rom, korean);
+    snprintf(details, sizeof(details), "HCI 0xFC6D | ROM=0x%02X",
+             static_cast<unsigned>(rom.bytes[6]));
+    report += details;
+    if (rom.bytes[6] == 1)
+        report += tr(" | RTL8761BU candidate, epatch chip ID 2.", " | RTL8761BU 후보, epatch 칩 ID 2.");
+    else
+        report += tr(" | ROM differs from the published A760 measurement.",
+                     " | 공개 A760 실측의 ROM 버전과 다릅니다.");
+    return report + tr("\nFirmware load unavailable: no approved Windows WinUSB firmware/config pair."
+                       "\nInitialization, discovery, pairing and streaming are gated.",
+                       "\n펌웨어 로드 대기: Windows WinUSB에서 검증된 펌웨어·설정 조합이 없습니다."
+                       "\n초기화·검색·페어링·스트리밍은 검증 후 활성화됩니다.");
 }

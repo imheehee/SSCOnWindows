@@ -30,12 +30,30 @@ WasapiCapture::WasapiCapture() {
 WasapiCapture::~WasapiCapture() {
     stop();
 
-    if (capture_client_) { capture_client_->Release(); capture_client_ = nullptr; }
-    if (audio_client_) { audio_client_->Release(); audio_client_ = nullptr; }
-    if (device_) { device_->Release(); device_ = nullptr; }
-    if (enumerator_) { enumerator_->Release(); enumerator_ = nullptr; }
-    if (buffer_event_) { CloseHandle(buffer_event_); buffer_event_ = nullptr; }
-    if (stop_event_) { CloseHandle(stop_event_); stop_event_ = nullptr; }
+    if (capture_client_) {
+        capture_client_->Release();
+        capture_client_ = nullptr;
+    }
+    if (audio_client_) {
+        audio_client_->Release();
+        audio_client_ = nullptr;
+    }
+    if (device_) {
+        device_->Release();
+        device_ = nullptr;
+    }
+    if (enumerator_) {
+        enumerator_->Release();
+        enumerator_ = nullptr;
+    }
+    if (buffer_event_) {
+        CloseHandle(buffer_event_);
+        buffer_event_ = nullptr;
+    }
+    if (stop_event_) {
+        CloseHandle(stop_event_);
+        stop_event_ = nullptr;
+    }
 }
 
 bool WasapiCapture::mute_output(bool mute) {
@@ -73,7 +91,7 @@ bool WasapiCapture::mute_output(bool mute) {
     return SUCCEEDED(hr);
 }
 
-bool WasapiCapture::init(uint32_t preferred_sample_rate, const wchar_t *device_id) {
+bool WasapiCapture::init(uint32_t preferred_sample_rate, const wchar_t *device_id, bool exact_sample_rate) {
     HRESULT hr;
 
     /* Initialize COM on this thread if not already done */
@@ -86,8 +104,7 @@ bool WasapiCapture::init(uint32_t preferred_sample_rate, const wchar_t *device_i
     /* Create device enumerator */
     hr = CoCreateInstance(
         CLSID_MMDeviceEnumerator_, nullptr, CLSCTX_ALL,
-        IID_IMMDeviceEnumerator_, reinterpret_cast<void **>(&enumerator_)
-    );
+        IID_IMMDeviceEnumerator_, reinterpret_cast<void **>(&enumerator_));
     if (FAILED(hr)) {
         fprintf(stderr, "WasapiCapture: Failed to create device enumerator: 0x%08lx\n", hr);
         return false;
@@ -125,8 +142,7 @@ bool WasapiCapture::init(uint32_t preferred_sample_rate, const wchar_t *device_i
     /* Activate IAudioClient */
     hr = device_->Activate(
         IID_IAudioClient_, CLSCTX_ALL, nullptr,
-        reinterpret_cast<void **>(&audio_client_)
-    );
+        reinterpret_cast<void **>(&audio_client_));
     if (FAILED(hr)) {
         fprintf(stderr, "WasapiCapture: Failed to activate audio client: 0x%08lx\n", hr);
         return false;
@@ -155,37 +171,37 @@ bool WasapiCapture::init(uint32_t preferred_sample_rate, const wchar_t *device_i
         }
     }
 
-    /* Try preferred sample rate if specified and different from system default */
     WAVEFORMATEX *init_format = mix_format;
-    WAVEFORMATEX custom_format = {};
-    bool use_custom = false;
-
-    if (preferred_sample_rate > 0 && preferred_sample_rate != mix_format->nSamplesPerSec) {
-        /* Build a custom format based on mix_format but with the preferred rate */
-        custom_format = *mix_format;
-        custom_format.nSamplesPerSec = preferred_sample_rate;
-        custom_format.nAvgBytesPerSec = preferred_sample_rate * mix_format->nBlockAlign;
-
-        WAVEFORMATEX *closest = nullptr;
-        hr = audio_client_->IsFormatSupported(
-            AUDCLNT_SHAREMODE_SHARED, &custom_format, &closest);
-        if (hr == S_OK) {
-            init_format = &custom_format;
-            use_custom = true;
-            fprintf(stderr, "WasapiCapture: Using preferred sample rate: %u Hz\n",
-                    preferred_sample_rate);
+    DWORD stream_flags = AUDCLNT_STREAMFLAGS_LOOPBACK;
+    WAVEFORMATEXTENSIBLE custom_format{};
+    if (preferred_sample_rate > 0 && preferred_sample_rate != mix_format->nSamplesPerSec &&
+        mix_format->cbSize <= sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX)) {
+        // Preserve the extensible PCM/float subtype and channel mask.
+        memcpy(&custom_format, mix_format, sizeof(WAVEFORMATEX) + mix_format->cbSize);
+        auto &format = custom_format.Format;
+        format.nSamplesPerSec = preferred_sample_rate;
+        format.nAvgBytesPerSec = preferred_sample_rate * format.nBlockAlign;
+        if (exact_sample_rate) {
+            init_format = &format;
+            stream_flags |= AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
         } else {
-            fprintf(stderr, "WasapiCapture: Preferred rate %u Hz not supported, using system default\n",
-                    preferred_sample_rate);
+            WAVEFORMATEX *closest = nullptr;
+            hr = audio_client_->IsFormatSupported(AUDCLNT_SHAREMODE_SHARED, &format, &closest);
+            if (hr == S_OK) init_format = &format;
             if (closest) CoTaskMemFree(closest);
         }
+    }
+    if (exact_sample_rate && init_format->nSamplesPerSec != preferred_sample_rate) {
+        fprintf(stderr, "WasapiCapture: Cannot prepare required %u Hz capture format\n", preferred_sample_rate);
+        CoTaskMemFree(mix_format);
+        return false;
     }
 
     sample_rate_ = init_format->nSamplesPerSec;
 
     fprintf(stderr, "WasapiCapture: Format: %u Hz, %u ch, %u bit (container: %u bit) tag=0x%04x\n",
-           sample_rate_, channels_, bits_per_sample_, init_format->wBitsPerSample,
-           mix_format->wFormatTag);
+            sample_rate_, channels_, bits_per_sample_, init_format->wBitsPerSample,
+            mix_format->wFormatTag);
     if (mix_format->wFormatTag == WAVE_FORMAT_EXTENSIBLE) {
         WAVEFORMATEXTENSIBLE *ext = reinterpret_cast<WAVEFORMATEXTENSIBLE *>(mix_format);
         fprintf(stderr, "WasapiCapture: Extensible subtype=%08x-... valid_bits=%u\n",
@@ -194,15 +210,16 @@ bool WasapiCapture::init(uint32_t preferred_sample_rate, const wchar_t *device_i
 
     /* Larger buffer for polling mode (event-driven keeps 10ms default) */
     REFERENCE_TIME buf_duration = static_cast<REFERENCE_TIME>(
-        (event_mode_ ? BUFFER_DURATION_MS : 40)) * 10000;
+                                      (event_mode_ ? BUFFER_DURATION_MS : 40)) *
+                                  10000;
 
     hr = audio_client_->Initialize(
         AUDCLNT_SHAREMODE_SHARED,
-        AUDCLNT_STREAMFLAGS_LOOPBACK,
+        stream_flags,
         buf_duration,
-        0,                  /* periodicity (0 = default for shared mode) */
+        0, /* periodicity (0 = default for shared mode) */
         init_format,
-        nullptr             /* session GUID */
+        nullptr /* session GUID */
     );
 
     if (FAILED(hr)) {
@@ -210,12 +227,11 @@ bool WasapiCapture::init(uint32_t preferred_sample_rate, const wchar_t *device_i
         fprintf(stderr, "WasapiCapture: Polling init failed (0x%08lx), trying event-driven\n", hr);
         hr = audio_client_->Initialize(
             AUDCLNT_SHAREMODE_SHARED,
-            AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+            stream_flags | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
             buf_duration,
             0,
             init_format,
-            nullptr
-        );
+            nullptr);
         if (SUCCEEDED(hr)) {
             /* Set the event handle for event-driven mode */
             HRESULT eh = audio_client_->SetEventHandle(buffer_event_);
@@ -241,8 +257,7 @@ bool WasapiCapture::init(uint32_t preferred_sample_rate, const wchar_t *device_i
     /* Get capture client */
     hr = audio_client_->GetService(
         IID_IAudioCaptureClient_,
-        reinterpret_cast<void **>(&capture_client_)
-    );
+        reinterpret_cast<void **>(&capture_client_));
     if (FAILED(hr)) {
         fprintf(stderr, "WasapiCapture: Failed to get capture client: 0x%08lx\n", hr);
         return false;
@@ -276,8 +291,7 @@ bool WasapiCapture::start(AudioCallback callback) {
 
     /* Create capture thread */
     thread_handle_ = CreateThread(
-        nullptr, 0, capture_thread_proc, this, 0, nullptr
-    );
+        nullptr, 0, capture_thread_proc, this, 0, nullptr);
     if (!thread_handle_) {
         fprintf(stderr, "WasapiCapture: Failed to create capture thread\n");
         audio_client_->Stop();
@@ -330,7 +344,7 @@ void WasapiCapture::capture_loop() {
     timeBeginPeriod(1);
 
     /* Wait on buffer_event (event-driven) + stop_event, or poll as fallback */
-    HANDLE wait_handles[2] = { stop_event_, buffer_event_ };
+    HANDLE wait_handles[2] = {stop_event_, buffer_event_};
     int handle_count = event_mode_ ? 2 : 1;
 
     while (running_.load()) {
@@ -363,8 +377,7 @@ void WasapiCapture::capture_loop() {
 
             hr = capture_client_->GetBuffer(
                 &data, &num_frames, &flags,
-                &device_position, &qpc_position
-            );
+                &device_position, &qpc_position);
             if (FAILED(hr)) {
                 fprintf(stderr, "WasapiCapture: GetBuffer failed: 0x%08lx\n", hr);
                 break;
@@ -398,7 +411,8 @@ void WasapiCapture::capture_loop() {
                     dev_hz = (double)(device_position - last_device_pos) * 1000.0 / dur_ms;
                 }
                 double silent_pct = dbg_total_frames
-                    ? (100.0 * (double)dbg_silent_frames / (double)dbg_total_frames) : 0.0;
+                                        ? (100.0 * (double)dbg_silent_frames / (double)dbg_total_frames)
+                                        : 0.0;
                 fprintf(stderr, "WasapiCapture: CLK dev=%llu qpc=%llu dev_hz=%.0f silent=%.1f%% frames=%llu\n",
                         (unsigned long long)device_position, (unsigned long long)qpc_position,
                         dev_hz, silent_pct, (unsigned long long)dbg_total_frames);

@@ -620,11 +620,14 @@ static int run_streaming(const uint8_t target_addr[6],
 
     WasapiCapture wasapi_capture;
     std::wstring saved_default_device;
+    const bool exact_ssc_rate = selected_codec == AudioCodec::SSC;
+    const auto ssc_cap = transport.get_remote_caps().ssc_cap;
+    const uint32_t capture_rate = exact_ssc_rate ? codec_policy::ssc_capture_rate(ssc_cap, 0) : 0;
 
     switch (capture_mode) {
     case CaptureMode::SystemLoopback:
         printf("Capture mode: System Loopback\n");
-        if (!wasapi_capture.init()) {
+        if (!wasapi_capture.init(capture_rate, nullptr, exact_ssc_rate)) {
             cstyle::fprint(stderr, cstyle::Tag::Error,
                            "Failed to initialize WASAPI capture\n");
             transport.disconnect();
@@ -645,7 +648,7 @@ static int run_streaming(const uint8_t target_addr[6],
         /* Save and switch default device */
         saved_default_device = AudioDeviceEnumerator::get_default_device_id();
         AudioDeviceEnumerator::set_default_device(audio_device_id);
-        if (!wasapi_capture.init(0, audio_device_id)) {
+        if (!wasapi_capture.init(capture_rate, audio_device_id, exact_ssc_rate)) {
             cstyle::fprint(stderr, cstyle::Tag::Error,
                            "Failed to initialize capture on virtual device\n");
             if (!saved_default_device.empty())
@@ -721,6 +724,7 @@ static int run_streaming(const uint8_t target_addr[6],
 #endif
     case AudioCodec::SSC: {
         auto ssc = std::make_unique<SscEncoder>();
+        ssc->set_legacy_mode(codec_policy::ssc_legacy_mode(codec_policy::ssc_configuration(ssc_cap, encode_sr)));
         if (g_ssc_native_daemon) ssc->set_native_daemon(true);
         if (g_ssc_bitrate_kbps > 0) ssc->set_bitrate_override(g_ssc_bitrate_kbps);
         encoder = std::move(ssc);
