@@ -2,8 +2,10 @@
 
 #include "MainWindow.g.h"
 #include "app_settings.h"
+#include "a760_firmware.h"
 
 #include <deque>
+#include <optional>
 
 namespace winrt::A2DPWBWinUI::implementation
 {
@@ -39,6 +41,10 @@ namespace winrt::A2DPWBWinUI::implementation
         void OnEnableStreamingClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
         void OnRestoreBtClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
         void OnA760DiagnosticsClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+        void OnA760DownloadClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+        void OnA760LocalClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+        void OnA760InitializeClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+        void OnA760SaveLogClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
         winrt::fire_and_forget RunA760Diagnostics();
         void OnRefreshDriverClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
         void OnToggleLogClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
@@ -67,6 +73,15 @@ namespace winrt::A2DPWBWinUI::implementation
         void RememberLastDevice(const std::string& mac, const std::string& name);
         void ShowSetupGuide();
         void ShowDriverInstructions(bool enable_winusb);
+
+        winrt::fire_and_forget VerifyA760Firmware(std::filesystem::path directory);
+        winrt::fire_and_forget InitializeA760();
+        void SetA760Busy(bool busy);
+        void ShowA760Result(std::string result);
+        bool a760Busy_{ false };
+        bool a760Active_{ false };
+        std::optional<A760Firmware> a760Firmware_;
+        std::string a760Log_;
 
         A2dpService::DeviceEntry selectedDevice_{};
         bool hasSelectedDevice_{ false };

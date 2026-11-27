@@ -261,4 +261,16 @@
   <data name="LogToggleButton.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
     <value>Show or hide the activity log. Entries are kept while it is hidden.</value>
   </data>
+  <data name="A760DownloadButton.Content" xml:space="preserve">
+    <value>Download and verify A760 firmware</value>
+  </data>
+  <data name="A760LocalButton.Content" xml:space="preserve">
+    <value>Verify local A760 firmware</value>
+  </data>
+  <data name="A760InitializeButton.Content" xml:space="preserve">
+    <value>Start experimental RAM initialization</value>
+  </data>
+  <data name="A760SaveLogButton.Content" xml:space="preserve">
+    <value>Save A760 log</value>
+  </data>
 </root>

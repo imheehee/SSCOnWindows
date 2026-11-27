@@ -7,6 +7,8 @@
  */
 
 #include "btstack_transport.h"
+#include "a760_diagnostics.h"
+#include "winusb_a760_target.h"
 #include "console_style.h"
 #include "codec_policy.h"
 
@@ -197,6 +199,11 @@ BtStackTransport::~BtStackTransport() {
 /* Initialization                                                           */
 /* ======================================================================== */
 
+void BtStackTransport::set_a760_experiment(A760Firmware firmware) {
+    a760_firmware_ = std::move(firmware);
+    product_id_ = 0;
+}
+
 bool BtStackTransport::init(const char *usb_path) {
     (void)usb_path; /* TODO: support specific USB device selection */
 
@@ -220,7 +227,8 @@ bool BtStackTransport::init(const char *usb_path) {
     {
         uint32_t elapsed = 0;
         const uint32_t poll_interval = 100;
-        while (elapsed < INIT_TIMEOUT_MS) {
+        const uint32_t timeout = a760_firmware_.device_path().empty() ? INIT_TIMEOUT_MS : 75000;
+        while (elapsed < timeout && !a760_init_failed_.load()) {
             if (init_result_.load()) {
                 fprintf(stderr, "BTstack: HCI ready after %lu ms\n", (unsigned long)elapsed);
                 fflush(stderr);
@@ -286,6 +294,19 @@ unsigned long __stdcall BtStackTransport::btstack_thread_proc(void *param) {
     hci_transport_usb_add_device(0x0A12, 0x0001); /* CSR (Cambridge Silicon Radio) */
     hci_transport_usb_add_device(0x8087, 0x0029); /* Intel AX200/AX201 */
     hci_transport_usb_add_device(0x8087, 0x0032); /* Intel AX210 */
+
+    if (!self->a760_firmware_.device_path().empty()) {
+        ssc_winusb_select_a760(self->a760_firmware_.device_path().c_str(), [](void *context, void *device, void *usb, uint8_t pipe) -> int {
+                auto *transport = static_cast<BtStackTransport *>(context);
+                if (transport->a760_attempted_) return 0;
+                transport->a760_attempted_ = true;
+                try {
+                    return initialize_a760_ram(device, usb, pipe, transport->a760_firmware_.payload(),
+                                               transport->a760_report_) ? 1 : 0;
+                } catch (...) {
+                    return 0;
+                } }, self);
+    }
 
     /* Initialize HCI with WinUSB transport */
     hci_init(hci_transport_usb_instance(), nullptr);
@@ -433,7 +454,17 @@ unsigned long __stdcall BtStackTransport::btstack_thread_proc(void *param) {
 
     /* Power on HCI — record start time to measure firmware loading */
     self->init_start_tick_ = GetTickCount();
-    hci_power_control(HCI_POWER_ON);
+    const int power_result = hci_power_control(HCI_POWER_ON);
+    if (!self->a760_firmware_.device_path().empty()) {
+        if (power_result) {
+            self->a760_report_ += "BTstack HCI_POWER_ON failed (no USB fallback), code=" +
+                                  std::to_string(power_result) + "\n";
+            self->a760_init_failed_.store(true);
+            return 0;
+        } else {
+            self->a760_power_started_.store(true);
+        }
+    }
 
     /* Run the event loop (blocks until shutdown) */
     btstack_run_loop_execute();
@@ -525,24 +556,26 @@ void BtStackTransport::register_codec_endpoints() {
 void BtStackTransport::shutdown() {
     if (!running_.load()) return;
 
+    RunLoopRequest power_off{};
+
     /* Power off HCI properly so the USB adapter is released.
      * Without this, the next launch can't open the adapter. */
-    if (hci_ready_.load()) {
+    if (hci_ready_.load() || a760_power_started_.load()) {
         fprintf(stderr, "BTstack: powering off HCI...\n");
         fflush(stderr);
 
         /* Dispatch hci_power_control(HCI_POWER_OFF) to BTstack thread */
-        RunLoopRequest req = {};
-        req.done_event = CreateEventA(nullptr, FALSE, FALSE, nullptr);
-        req.reg.callback = [](void *ctx) {
-            auto *r = static_cast<RunLoopRequest *>(ctx);
-            hci_power_control(HCI_POWER_OFF);
-            SetEvent(r->done_event);
-        };
-        req.reg.context = &req;
-        btstack_run_loop_execute_on_main_thread(&req.reg);
-        WaitForSingleObject(req.done_event, 3000);
-        CloseHandle(req.done_event);
+        power_off.done_event = CreateEventA(nullptr, FALSE, FALSE, nullptr);
+        if (power_off.done_event) {
+            power_off.reg.callback = [](void *ctx) {
+                auto *r = static_cast<RunLoopRequest *>(ctx);
+                hci_power_control(HCI_POWER_OFF);
+                SetEvent(r->done_event);
+            };
+            power_off.reg.context = &power_off;
+            btstack_run_loop_execute_on_main_thread(&power_off.reg);
+            WaitForSingleObject(power_off.done_event, 3000);
+        }
 
         /* Wait for HCI_STATE_OFF event (signals init_event_) */
         WaitForSingleObject(init_event_, 5000);
@@ -559,11 +592,13 @@ void BtStackTransport::shutdown() {
     btstack_run_loop_trigger_exit();
 
     if (thread_handle_) {
-        WaitForSingleObject(thread_handle_, 10000);
+        WaitForSingleObject(thread_handle_, a760_firmware_.device_path().empty() ? 10000 : INFINITE);
         CloseHandle(thread_handle_);
         thread_handle_ = nullptr;
     }
 
+    if (power_off.done_event) CloseHandle(power_off.done_event);
+    ssc_winusb_select_a760(nullptr, nullptr, nullptr);
     fprintf(stderr, "BTstack: shutdown complete\n");
     fflush(stderr);
 
@@ -1162,10 +1197,41 @@ void BtStackTransport::handle_packet(uint8_t packet_type, uint16_t channel,
     if (packet_type == HCI_EVENT_PACKET) {
         uint8_t event_type = hci_event_packet_get_type(packet);
 
+        if (!a760_firmware_.device_path().empty() && !init_result_.load() && !a760_init_failed_.load() &&
+            event_type == HCI_EVENT_COMMAND_COMPLETE && size >= 5 &&
+            little_endian_read_16(packet, 3) == 0x1001) {
+            a760_post_reset_verified_ = size == 14 && packet[5] == 0 &&
+                                        packet[6] == 0x0a && packet[9] == 0x0a &&
+                                        little_endian_read_16(packet, 10) == 0x005d &&
+                                        little_endian_read_16(packet, 7) == (a760::patch_version >> 16) &&
+                                        little_endian_read_16(packet, 12) == (a760::patch_version & 0xffff);
+            char trace[192];
+            if (size == 14) {
+                snprintf(trace, sizeof(trace),
+                         "BTstack HCI 0x1001 after reset: status=0x%02X HCI=0x%02X rev=0x%04X LMP=0x%02X subver=0x%04X manufacturer=0x%04X\n",
+                         static_cast<unsigned>(packet[5]), static_cast<unsigned>(packet[6]),
+                         static_cast<unsigned>(little_endian_read_16(packet, 7)),
+                         static_cast<unsigned>(packet[9]), static_cast<unsigned>(little_endian_read_16(packet, 12)),
+                         static_cast<unsigned>(little_endian_read_16(packet, 10)));
+            } else {
+                snprintf(trace, sizeof(trace), "BTstack HCI 0x1001 after reset: unexpected length %u\n",
+                         static_cast<unsigned>(size));
+            }
+            a760_report_ += trace;
+            if (!a760_post_reset_verified_) a760_init_failed_.store(true);
+        }
+
         switch (event_type) {
         case BTSTACK_EVENT_STATE: {
             uint8_t state = btstack_event_state_get_state(packet);
             if (state == HCI_STATE_WORKING) {
+                if (!a760_firmware_.device_path().empty() && !a760_post_reset_verified_) {
+                    a760_report_ += "ABORT: BTstack did not confirm patched HCI version after reset\n";
+                    a760_init_failed_.store(true);
+                    break;
+                }
+                if (!a760_firmware_.device_path().empty() && !init_result_.load())
+                    a760_report_ += "BTstack HCI_STATE_WORKING; discovery available\n";
                 uint32_t elapsed = GetTickCount() - init_start_tick_;
                 fprintf(stderr, "BTstack: HCI ready (took %lu ms)\n", (unsigned long)elapsed);
                 if (elapsed < 500) {

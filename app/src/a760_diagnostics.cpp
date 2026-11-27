@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
 #include "a760_diagnostics.h"
 
+#include "a760_firmware.h"
 #include "bt_adapter_enum.h"
 #include "driver_mode.h"
 
 #include <windows.h>
 #include <winusb.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <memory>
@@ -54,21 +56,28 @@ struct HciReply {
 };
 
 HciReply read_hci(uint16_t opcode, HANDLE device, WINUSB_INTERFACE_HANDLE usb,
-                  UCHAR pipe, HANDLE event) {
+                  UCHAR pipe, HANDLE event, const uint8_t *parameters = nullptr,
+                  size_t length = 0) {
     HciReply reply;
-    UCHAR command[] = {static_cast<UCHAR>(opcode), static_cast<UCHAR>(opcode >> 8), 0};
-    WINUSB_SETUP_PACKET setup{0x20, 0, 0, 0, sizeof(command)};
+    if (length > 255) return reply;
+    std::array<UCHAR, 258> command{};
+    command[0] = static_cast<UCHAR>(opcode);
+    command[1] = static_cast<UCHAR>(opcode >> 8);
+    command[2] = static_cast<UCHAR>(length);
+    if (length) std::copy_n(parameters, length, command.data() + 3);
+    const auto command_size = static_cast<USHORT>(length + 3);
+    WINUSB_SETUP_PACKET setup{0x20, 0, 0, 0, command_size};
     ResetEvent(event);
     OVERLAPPED io{};
     io.hEvent = event;
     ULONG sent = 0;
-    if (!finish_transfer(WinUsb_ControlTransfer(usb, setup, command, sizeof(command), &sent, &io),
+    if (!finish_transfer(WinUsb_ControlTransfer(usb, setup, command.data(), command_size, &sent, &io),
                          device, usb, io, sent, 1000)) {
         reply.result = HciReply::Result::SendFailed;
         reply.error = GetLastError();
         return reply;
     }
-    if (sent != sizeof(command)) {
+    if (sent != command_size) {
         reply.result = HciReply::Result::SendFailed;
         reply.error = ERROR_BAD_LENGTH;
         return reply;
@@ -119,9 +128,37 @@ std::string hci_failure(uint16_t opcode, const HciReply &reply, bool korean) {
     return details;
 }
 
+bool is_a760_descriptor(WINUSB_INTERFACE_HANDLE handle) {
+    USB_DEVICE_DESCRIPTOR descriptor{};
+    ULONG size = 0;
+    return WinUsb_GetDescriptor(handle, USB_DEVICE_DESCRIPTOR_TYPE, 0, 0,
+                                reinterpret_cast<PUCHAR>(&descriptor), sizeof(descriptor), &size) &&
+           size == sizeof(descriptor) && descriptor.idVendor == A760_VID &&
+           descriptor.idProduct == A760_PID && descriptor.bcdDevice == A760_REV;
+}
+
+bool matches_version(const HciReply &version, unsigned revision, unsigned subversion) {
+    const auto *reply = version.bytes.data();
+    return version.result == HciReply::Result::Complete && version.size == 14 && !reply[5] &&
+           reply[6] == 0x0a && reply[9] == 0x0a && le16(reply + 10) == 0x005d &&
+           le16(reply + 7) == revision && le16(reply + 12) == subversion;
+}
+
+std::string describe_version(const HciReply &version, bool korean) {
+    if (version.result != HciReply::Result::Complete || version.bytes[5] || version.size != 14)
+        return hci_failure(0x1001, version, korean);
+    const auto *p = version.bytes.data();
+    char details[160];
+    snprintf(details, sizeof(details),
+             "HCI 0x1001 status=0x00 | HCI=0x%02X rev=0x%04X | LMP=0x%02X subver=0x%04X | Manufacturer=0x%04X",
+             static_cast<unsigned>(p[6]), le16(p + 7), static_cast<unsigned>(p[9]),
+             le16(p + 12), le16(p + 10));
+    return details;
+}
+
 } // namespace
 
-std::string diagnose_a760(bool korean) {
+static std::string diagnose_a760_impl(bool korean, const std::string *expected_path, bool *rom_ok) {
     const auto tr = [korean](const char *en, const char *ko) { return korean ? ko : en; };
     const auto status = detect_dongle_driver(A760_VID, A760_PID);
     std::string report = "USB 0BDA:A760";
@@ -148,6 +185,9 @@ std::string diagnose_a760(bool korean) {
     const auto unavailable = tr("Could not open the A760 Bluetooth interface exclusively.",
                                 "A760 Bluetooth 인터페이스를 단독으로 열 수 없습니다.");
     if (path.empty()) return report + unavailable;
+    if (expected_path && _stricmp(expected_path->c_str(), path.c_str()) != 0)
+        return report + "ABORT: WinUSB A760 interface changed after verification";
+
     const HANDLE raw = CreateFileA(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
                                    OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
     if (raw == INVALID_HANDLE_VALUE) return report + unavailable;
@@ -156,12 +196,7 @@ std::string diagnose_a760(bool korean) {
     if (!WinUsb_Initialize(raw, &handle)) return report + unavailable;
     const std::unique_ptr<void, WinUsbCloser> usb(handle);
 
-    USB_DEVICE_DESCRIPTOR descriptor{};
-    ULONG size = 0;
-    if (!WinUsb_GetDescriptor(handle, USB_DEVICE_DESCRIPTOR_TYPE, 0, 0,
-                              reinterpret_cast<PUCHAR>(&descriptor), sizeof(descriptor), &size) ||
-        size != sizeof(descriptor) || descriptor.idVendor != A760_VID ||
-        descriptor.idProduct != A760_PID || descriptor.bcdDevice != A760_REV) {
+    if (!is_a760_descriptor(handle)) {
         return report + tr("HCI skipped: USB descriptor must identify 0BDA:A760 REV_0200.",
                            "USB 장치 설명자가 0BDA:A760 REV_0200과 일치할 때만 HCI 명령을 보냅니다.");
     }
@@ -189,20 +224,9 @@ std::string diagnose_a760(bool korean) {
     if (version.result != HciReply::Result::Complete || version.bytes[5] || version.size != 14)
         return report + hci_failure(local_version, version, korean);
 
-    const auto *reply = version.bytes.data();
-    const auto manufacturer = le16(reply + 10);
-    const auto revision = le16(reply + 7);
-    const auto subversion = le16(reply + 12);
+    report += describe_version(version, korean) + "\n";
     char details[160];
-    snprintf(details, sizeof(details),
-             "HCI=0x%02X rev=0x%04X | LMP=0x%02X subver=0x%04X | Manufacturer=0x%04X",
-             static_cast<unsigned>(reply[6]), revision, static_cast<unsigned>(reply[9]),
-             subversion, manufacturer);
-    report += details;
-    report += '\n';
-
-    const bool expected_identity = reply[6] == 0x0a && revision == 0x000b &&
-                                   reply[9] == 0x0a && subversion == 0x8761 && manufacturer == 0x005d;
+    const bool expected_identity = matches_version(version, 0x000b, 0x8761);
     if (!expected_identity)
         return report + tr("ROM query skipped: expected the unpatched RTL8761BU identity.",
                            "ROM 조회 생략: 패치 전 RTL8761BU 식별값과 일치하지 않습니다.");
@@ -220,8 +244,84 @@ std::string diagnose_a760(bool korean) {
     else
         report += tr(" | ROM differs from the published A760 measurement.",
                      " | 공개 A760 실측의 ROM 버전과 다릅니다.");
-    return report + tr("\nFirmware load unavailable: no approved Windows WinUSB firmware/config pair."
-                       "\nInitialization, discovery, pairing and streaming are gated.",
-                       "\n펌웨어 로드 대기: Windows WinUSB에서 검증된 펌웨어·설정 조합이 없습니다."
-                       "\n초기화·검색·페어링·스트리밍은 검증 후 활성화됩니다.");
+    if (rom_ok) *rom_ok = rom.bytes[6] == 1;
+    return report;
+}
+
+std::string diagnose_a760(bool korean) {
+    return diagnose_a760_impl(korean, nullptr, nullptr);
+}
+
+bool verify_a760_rom(const std::string &path, std::string &report) {
+    bool rom_ok = false;
+    report += diagnose_a760_impl(false, &path, &rom_ok) + "\n";
+    return rom_ok;
+}
+
+bool initialize_a760_ram(void *device, void *usb, uint8_t event_pipe,
+                         const std::vector<uint8_t> &payload, std::string &report) {
+    const auto log = [&report](const std::string &line) { report += line + "\n"; };
+    if (!is_a760_descriptor(usb) || !(event_pipe & 0x80) || payload.size() != 30210) {
+        log("ABORT: expected REV_0200, interrupt IN pipe and validated 30210-byte image");
+        return false;
+    }
+    const FileHandle event(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    if (!event) {
+        log("ABORT: CreateEvent failed, Win32=" + std::to_string(GetLastError()));
+        return false;
+    }
+    const auto before = read_hci(0x1001, device, usb, event_pipe, event.get());
+    log("Before: " + describe_version(before, false));
+    if (!matches_version(before, 0x000b, 0x8761)) {
+        log("ABORT: cold RTL8761BU identity mismatch; unplug/reconnect before retry");
+        return false;
+    }
+    const auto rom = read_hci(0xfc6d, device, usb, event_pipe, event.get());
+    if (rom.result != HciReply::Result::Complete || rom.bytes[5] || rom.size != 7) {
+        log(hci_failure(0xfc6d, rom, false));
+        return false;
+    }
+    log("HCI 0xFC6D status=0x00 ROM=" + std::to_string(rom.bytes[6]));
+    if (rom.bytes[6] != 1) {
+        log("ABORT: expected ROM=1 (chip ID 2)");
+        return false;
+    }
+
+    const auto deadline = GetTickCount64() + 35000;
+    const size_t count = payload.size() / a760::fragment_size + 1;
+    for (size_t i = 0; i < count; ++i) {
+        if (GetTickCount64() >= deadline) {
+            log("ABORT: total RAM patch timeout");
+            return false;
+        }
+        const auto frag = a760::fragment(payload.size(), i);
+        std::array<uint8_t, a760::fragment_size + 1> parameters{};
+        parameters[0] = frag.index;
+        std::copy_n(payload.data() + frag.offset, frag.length, parameters.data() + 1);
+        const auto response = read_hci(0xfc20, device, usb, event_pipe, event.get(),
+                                       parameters.data(), frag.length + 1);
+        char line[192];
+        snprintf(line, sizeof(line), "HCI 0xFC20 fragment=%zu/%zu payload=%zu tx=0x%02X rx=0x%02X status=0x%02X",
+                 i + 1, count, frag.length, static_cast<unsigned>(frag.index),
+                 static_cast<unsigned>(response.bytes[6]), static_cast<unsigned>(response.bytes[5]));
+        log(line);
+        if (response.result != HciReply::Result::Complete || response.bytes[5] || response.size != 7) {
+            log(hci_failure(0xfc20, response, false));
+            return false;
+        }
+        // Firmware may clear the end marker when echoing the final index.
+        const auto echo = response.bytes[6];
+        if (echo != frag.index && (i + 1 != count || echo != (frag.index & 0x7f))) {
+            log("ABORT: fragment acknowledgement index mismatch");
+            return false;
+        }
+    }
+    const auto after = read_hci(0x1001, device, usb, event_pipe, event.get());
+    log("After: " + describe_version(after, false));
+    if (!matches_version(after, a760::patch_version >> 16, a760::patch_version & 0xffff)) {
+        log("ABORT: expected patched firmware 0xDFC6D922");
+        return false;
+    }
+    log("RAM patch verified; starting standard BTstack HCI initialization on the same USB handle");
+    return true;
 }

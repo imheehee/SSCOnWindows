@@ -88,7 +88,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup>
     <Link>
-      <AdditionalDependencies>$(ProjectDir)..\build_msvc\app\$(Configuration)\a2dpwb_core.lib;$(ProjectDir)..\build_msvc\$(Configuration)\btstack.lib;$(ProjectDir)..\build_msvc\$(Configuration)\sbc_codec.lib;$(ProjectDir)..\build_msvc\fdk-aac\$(Configuration)\fdk-aac.lib;ole32.lib;uuid.lib;avrt.lib;bthprops.lib;ws2_32.lib;propsys.lib;version.lib;setupapi.lib;shcore.lib;winmm.lib;shell32.lib;winusb.lib;windowsapp.lib;dwmapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(ProjectDir)..\build_msvc\app\$(Configuration)\a2dpwb_core.lib;$(ProjectDir)..\build_msvc\$(Configuration)\btstack.lib;$(ProjectDir)..\build_msvc\$(Configuration)\sbc_codec.lib;$(ProjectDir)..\build_msvc\fdk-aac\$(Configuration)\fdk-aac.lib;ole32.lib;uuid.lib;avrt.lib;bthprops.lib;ws2_32.lib;propsys.lib;version.lib;setupapi.lib;shcore.lib;winmm.lib;shell32.lib;winusb.lib;bcrypt.lib;winhttp.lib;windowsapp.lib;dwmapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup Condition="'$(WindowsPackageType)'!='None' and Exists('Package.appxmanifest')">

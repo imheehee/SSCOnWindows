@@ -5,6 +5,8 @@
 #endif
 #include "driver_mode.h"
 #include "a760_diagnostics.h"
+#include <shobjidl.h>
+#include <fstream>
 #include "driver_switch.h"
 #include "ssc_encoder.h"
 
@@ -34,6 +36,33 @@ namespace
     const wchar_t* UiText(const wchar_t* english, const wchar_t* korean)
     {
         return IsKorean() ? korean : english;
+    }
+
+    std::filesystem::path ChooseA760Path(bool saveLog)
+    {
+        auto dialog = saveLog
+            ? winrt::create_instance<IFileDialog>(CLSID_FileSaveDialog)
+            : winrt::create_instance<IFileDialog>(CLSID_FileOpenDialog);
+        FILEOPENDIALOGOPTIONS options{};
+        winrt::check_hresult(dialog->GetOptions(&options));
+        winrt::check_hresult(dialog->SetOptions(options | FOS_FORCEFILESYSTEM |
+                                               (saveLog ? FOS_OVERWRITEPROMPT : FOS_PICKFOLDERS)));
+        if (saveLog) {
+            winrt::check_hresult(dialog->SetFileName(L"a760-session.txt"));
+            winrt::check_hresult(dialog->SetDefaultExtension(L"txt"));
+        } else {
+            winrt::check_hresult(dialog->SetTitle(UiText(L"Select the folder containing both firmware files",
+                                                       L"펌웨어 파일 두 개가 있는 폴더를 선택하세요")));
+        }
+        const HRESULT shown = dialog->Show(GetActiveWindow());
+        if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED)) return {};
+        winrt::check_hresult(shown);
+        winrt::com_ptr<IShellItem> item;
+        winrt::check_hresult(dialog->GetResult(item.put()));
+        PWSTR path{};
+        winrt::check_hresult(item->GetDisplayName(SIGDN_FILESYSPATH, &path));
+        const std::unique_ptr<wchar_t, decltype(&CoTaskMemFree)> holder(path, CoTaskMemFree);
+        return std::filesystem::path(path);
     }
 
     struct Rtl8761Adapter {
@@ -403,6 +432,12 @@ namespace winrt::A2DPWBWinUI::implementation
         service_->set_stream_info_callback([this](const A2dpService::StreamInfo& info) {
             auto captured = this;
             dispatcher_.TryEnqueue([captured, info]() {
+                if (captured->a760Active_) {
+                    captured->AppendLog(LogTag::Data, "A760 stream: " + info.codec + " " +
+                        std::to_string(info.sample_rate) + " Hz, capture " +
+                        std::to_string(info.source_sample_rate) + " Hz, " +
+                        std::to_string(info.bitrate_kbps) + " kbps");
+                }
                 captured->CodecText().Text(UiText(L"Codec: ", L"코덱: ") + AToW(info.codec));
                 captured->BitrateText().Text(UiText(L"Bitrate: ", L"비트 전송률: ") + AToW(std::to_string(info.bitrate_kbps) + " kbps"));
                 captured->SampleRateText().Text(UiText(L"Sample Rate: ", L"샘플링 주파수: ") + AToW(std::to_string(info.sample_rate) + " Hz"));
@@ -525,7 +560,7 @@ namespace winrt::A2DPWBWinUI::implementation
 
     void MainWindow::OnScanClick(IInspectable const&, RoutedEventArgs const&)
     {
-        if (!service_ || service_->is_scanning()) return;
+        if (!service_ || a760Busy_ || service_->is_scanning()) return;
 
         AppendLog("Scanning for Bluetooth audio devices (BTstack inquiry ~8s)...");
         ScanButton().IsEnabled(false);
@@ -539,7 +574,7 @@ namespace winrt::A2DPWBWinUI::implementation
 
     void MainWindow::OnConnectClick(IInspectable const&, RoutedEventArgs const&)
     {
-        if (!service_) return;
+        if (!service_ || a760Busy_) return;
 
         if (isStreaming_) {
             StopStream();
@@ -570,7 +605,7 @@ namespace winrt::A2DPWBWinUI::implementation
 
     void MainWindow::OnDirectConnectClick(IInspectable const&, RoutedEventArgs const&)
     {
-        if (!service_) return;
+        if (!service_ || a760Busy_) return;
 
         if (isStreaming_) {
             StopStream();
@@ -860,7 +895,7 @@ namespace winrt::A2DPWBWinUI::implementation
 
     void MainWindow::StartStream(const std::string& mac, const std::string& name, const std::string& logText)
     {
-        if (!service_ || isStreaming_) {
+        if (!service_ || a760Busy_ || isStreaming_) {
             if (isStreaming_) AppendLog(LogTag::Warn, "Disconnect first.");
             return;
         }
@@ -1295,9 +1330,10 @@ namespace winrt::A2DPWBWinUI::implementation
 
     winrt::fire_and_forget MainWindow::RunA760Diagnostics()
     {
-        auto weak = get_weak();
+        if (a760Busy_) co_return;
+        auto lifetime = get_strong();
         const bool korean = IsKorean();
-        A760DiagnosticsButton().IsEnabled(false);
+        SetA760Busy(true);
         winrt::apartment_context ui;
         co_await winrt::resume_background();
         std::string result;
@@ -1307,10 +1343,158 @@ namespace winrt::A2DPWBWinUI::implementation
             result = korean ? "A760 진단 중 오류가 발생했습니다." : "A760 diagnostics failed.";
         }
         co_await ui;
-        if (auto self = weak.get()) {
-            self->A760DiagnosticsButton().IsEnabled(true);
-            self->A760DiagnosticsResult().Text(AToW(result));
-            self->AppendLog(LogTag::Data, result);
+        ShowA760Result(std::move(result));
+        SetA760Busy(false);
+    }
+
+    void MainWindow::SetA760Busy(bool busy)
+    {
+        a760Busy_ = busy;
+        A760DiagnosticsButton().IsEnabled(!busy);
+        A760DownloadButton().IsEnabled(!busy);
+        A760LocalButton().IsEnabled(!busy);
+        A760InitializeButton().IsEnabled(!busy && a760Firmware_.has_value());
+        A760SaveLogButton().IsEnabled(!busy && !a760Log_.empty());
+    }
+
+    void MainWindow::ShowA760Result(std::string result)
+    {
+        a760Log_ += result + "\n";
+        // The complete trace is saved separately so fragment logs do not stretch the window.
+        constexpr size_t maxPreview = 1600;
+        if (result.size() > maxPreview) {
+            const auto start = result.find('\n', result.size() - maxPreview);
+            if (start != std::string::npos)
+                result = std::string(UiText("Showing end of log. Save for full trace.\n",
+                                            "로그 끝부분을 표시합니다. 전체 기록은 저장할 수 있습니다.\n"))
+                       + result.substr(start + 1);
+        }
+        A760DiagnosticsResult().Text(AToW(result));
+        AppendLog(LogTag::Data, "[A760] " + result);
+    }
+
+    void MainWindow::OnA760DownloadClick(IInspectable const&, RoutedEventArgs const&)
+    {
+        VerifyA760Firmware({});
+    }
+
+    void MainWindow::OnA760LocalClick(IInspectable const&, RoutedEventArgs const&)
+    {
+        if (a760Busy_) return;
+        try {
+            auto directory = ChooseA760Path(false);
+            if (!directory.empty()) VerifyA760Firmware(std::move(directory));
+        } catch (...) {
+            ShowA760Result(UiText("Could not open the firmware folder picker.",
+                                 "펌웨어 폴더 선택 창을 열지 못했습니다."));
+            SetA760Busy(false);
+        }
+    }
+
+    winrt::fire_and_forget MainWindow::VerifyA760Firmware(std::filesystem::path directory)
+    {
+        if (a760Busy_) co_return;
+        auto lifetime = get_strong();
+        a760Firmware_.reset();
+        SetA760Busy(true);
+        A760DiagnosticsResult().Text(UiText(L"Verifying firmware…", L"펌웨어를 검증하고 있습니다…"));
+        winrt::apartment_context ui;
+        co_await winrt::resume_background();
+        std::string report;
+        std::optional<A760Firmware> verified;
+        try {
+            verified = A760Firmware::prepare(directory, report);
+        } catch (const std::exception& e) {
+            report += std::string("ABORT: ") + e.what() + "\n";
+        } catch (...) {
+            report += "ABORT: firmware verification failed\n";
+        }
+        co_await ui;
+        a760Firmware_ = std::move(verified);
+        report += a760Firmware_
+            ? UiText("File checks passed. RAM initialization requires separate confirmation.",
+                     "파일 검증을 통과했습니다. RAM 초기화 시작에는 별도 승인이 필요합니다.")
+            : UiText("Verification failed. Try the local folder with matching upstream files.",
+                     "검증에 실패했습니다. 공식 원본 파일 두 개가 있는 로컬 폴더로 다시 확인하세요.");
+        ShowA760Result(std::move(report));
+        SetA760Busy(false);
+    }
+
+    void MainWindow::OnA760InitializeClick(IInspectable const&, RoutedEventArgs const&)
+    {
+        InitializeA760();
+    }
+
+    winrt::fire_and_forget MainWindow::InitializeA760()
+    {
+        if (a760Busy_ || !a760Firmware_ || !service_) co_return;
+        if (service_->bluetooth_busy()) {
+            ShowA760Result(UiText("Stop discovery and streaming before starting the experiment.",
+                                 "실험을 시작하기 전에 장치 검색과 스트리밍을 중지하세요."));
+            co_return;
+        }
+        auto lifetime = get_strong();
+        SetA760Busy(true);
+        ContentDialog approval;
+        approval.Title(box_value(UiText(L"Experimental A760 RAM patch", L"A760 실험용 RAM 패치")));
+        TextBlock body;
+        body.TextWrapping(TextWrapping::Wrap);
+        body.Text(UiText(L"Load the verified Linux patch into RAM on one A760 REV_0200? This Windows path is experimental. If it fails, unplug and reconnect the dongle.",
+                         L"검증한 Linux 패치를 A760 REV_0200 한 대의 RAM에 로드하시겠습니까? Windows 실험 경로입니다. 실패하면 동글을 뺐다가 다시 연결하세요."));
+        approval.Content(body);
+        approval.PrimaryButtonText(UiText(L"Approve RAM load", L"RAM 로드 승인"));
+        approval.CloseButtonText(UiText(L"Cancel", L"취소"));
+        approval.DefaultButton(ContentDialogButton::Close);
+        approval.XamlRoot(Content().XamlRoot());
+        ContentDialogResult result = ContentDialogResult::None;
+        try {
+            result = co_await approval.ShowAsync();
+        } catch (...) {
+            SetA760Busy(false);
+            co_return;
+        }
+        if (result != ContentDialogResult::Primary) {
+            SetA760Busy(false);
+            co_return;
+        }
+        auto prepared = std::move(*a760Firmware_);
+        a760Firmware_.reset();
+        hasSelectedDevice_ = false;
+        DeviceListView().Items().Clear();
+        ConnectButton().IsEnabled(false);
+        A760DiagnosticsResult().Text(UiText(L"Initializing A760 RAM…", L"A760 RAM을 초기화하고 있습니다…"));
+        winrt::apartment_context ui;
+        co_await winrt::resume_background();
+        std::string report;
+        bool ready = false;
+        try {
+            ready = service_->start_a760_experiment(std::move(prepared), report);
+        } catch (...) {
+            report += "ABORT: initialization error\n";
+        }
+        co_await ui;
+        a760Active_ = ready;
+        report += ready ? UiText("A760 ready. Scan, select the headset, then press Connect.",
+                                 "A760 준비 완료. 장치를 검색하고 헤드셋을 선택한 뒤 연결하세요.")
+                        : UiText("Stopped. Unplug and reconnect the A760 before retrying.",
+                                 "중단했습니다. 다시 시도하기 전에 A760을 뺐다가 연결하세요.");
+        ShowA760Result(std::move(report));
+        SetA760Busy(false);
+    }
+
+    void MainWindow::OnA760SaveLogClick(IInspectable const&, RoutedEventArgs const&)
+    {
+        if (a760Busy_ || a760Log_.empty()) return;
+        try {
+            const auto path = ChooseA760Path(true);
+            if (path.empty()) return;
+            std::ofstream output(path, std::ios::binary);
+            output << a760Log_;
+            output.close();
+            if (!output) throw std::runtime_error("log write failed");
+            AppendLog(LogTag::Ok, UiText("A760 log saved.", "A760 로그를 저장했습니다."));
+        } catch (...) {
+            AppendLog(LogTag::Error, UiText("Could not save the A760 log.", "A760 로그를 저장하지 못했습니다."));
         }
     }
 
@@ -1363,6 +1547,8 @@ namespace winrt::A2DPWBWinUI::implementation
 
     void MainWindow::AppendLog(LogTag tag, const std::string& text)
     {
+        if (a760Active_ && text.rfind("[A760] ", 0) != 0 && a760Log_.size() < 1024 * 1024)
+            a760Log_ += text + "\n";
         Microsoft::UI::Xaml::Media::SolidColorBrush brush{ nullptr };
         switch (tag) {
         case LogTag::Ok:    brush = TagBrush(L"TagOkBrush");    break;

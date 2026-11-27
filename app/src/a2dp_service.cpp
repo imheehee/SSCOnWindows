@@ -813,6 +813,23 @@ bool A2dpService::ensure_btstack_init() {
     if (btstack_ready_.load()) return true;
     if (btstack_init_failed_.load()) return false;
 
+    return initialize_btstack_locked(nullptr, nullptr);
+}
+
+bool A2dpService::start_a760_experiment(A760Firmware firmware, std::string &report) {
+    std::lock_guard<std::mutex> lock(transport_mutex_);
+    if (bluetooth_busy() || firmware.device_path().empty() || firmware.payload().empty()) {
+        report += "ABORT: Bluetooth service busy or no validated firmware\n";
+        return false;
+    }
+    if (transport_) transport_->shutdown();
+    transport_.reset();
+    btstack_ready_.store(false);
+    btstack_init_failed_.store(false);
+    return initialize_btstack_locked(&firmware, &report);
+}
+
+bool A2dpService::initialize_btstack_locked(A760Firmware *firmware, std::string *report) {
     transport_ = std::make_unique<BtStackTransport>();
     transport_->set_volume_changed_callback([this](uint8_t vol) {
         std::lock_guard<std::mutex> lk(cb_mutex_);
@@ -823,11 +840,13 @@ bool A2dpService::ensure_btstack_init() {
         transport_->set_hci_dump_file(get_config_dir() + "\\hci_dump.pklg");
     }
     transport_->set_firmware_dir(get_config_dir());
-    transport_->set_link_key_dir(get_config_dir());
+    if (!firmware) transport_->set_link_key_dir(get_config_dir());
 
-    /* Use the chip PID selected in Firmware settings.
-     * pid==0 means non-Realtek or no chip selected — skip chipset init. */
-    {
+    if (firmware) {
+        transport_->set_a760_experiment(std::move(*firmware));
+    } else {
+        /* Use the chip PID selected in Firmware settings.
+         * pid==0 means non-Realtek or no chip selected — skip chipset init. */
         uint16_t pid = bt_chip_pid_;
         if (pid != 0) {
             const char *name = BtAdapterEnumerator::realtek_chip_name(pid);
@@ -842,7 +861,10 @@ bool A2dpService::ensure_btstack_init() {
         }
     }
 
-    if (!transport_->init(nullptr)) {
+    const bool ready = transport_->init(nullptr);
+    if (report) *report += transport_->a760_report();
+    if (!ready) {
+        if (report) *report += "BTstack initialization failed; unplug/reconnect A760 before retry\n";
         btstack_init_failed_.store(true);
         return false;
     }

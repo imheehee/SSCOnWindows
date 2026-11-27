@@ -55,6 +55,8 @@ add_library(a2dpwb_core STATIC
     src/ssc_daemon_backend.cpp
     src/bt_device.cpp
     src/a760_diagnostics.cpp
+    src/a760_firmware.cpp
+    src/a760_payload.cpp
     src/bt_adapter_enum.cpp
     src/audio_device_enum.cpp
     src/btstack_link_key_db_file.c
@@ -97,6 +99,8 @@ target_link_libraries(a2dpwb_core PUBLIC
     ole32          # COM (CoInitializeEx, CoCreateInstance)
     uuid           # COM interface UUIDs (__uuidof)
     avrt           # Multimedia scheduling (AvSetMmThreadCharacteristics)
+    bcrypt         # pinned firmware SHA-256
+    winhttp        # HTTPS firmware download
     bthprops       # Bluetooth device enumeration (BluetoothFindFirstDevice)
     ws2_32         # Winsock (Bluetooth address types)
     propsys        # Property store (PKEY_Device_FriendlyName)

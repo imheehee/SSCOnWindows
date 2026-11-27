@@ -365,6 +365,18 @@
                                     Style="{StaticResource AppButtonStyle}" Click="OnA760DiagnosticsClick" />
                             <TextBlock x:Name="A760DiagnosticsResult" TextWrapping="Wrap"
                                        IsTextSelectionEnabled="True" />
+                            <Button x:Uid="A760DownloadButton" x:Name="A760DownloadButton"
+                                    Content="Download and verify A760 firmware" Click="OnA760DownloadClick"
+                                    Style="{StaticResource AppButtonStyle}" ContentTemplate="{StaticResource WrappedButtonCaption}" />
+                            <Button x:Uid="A760LocalButton" x:Name="A760LocalButton"
+                                    Content="Verify local A760 firmware" Click="OnA760LocalClick"
+                                    Style="{StaticResource AppButtonStyle}" ContentTemplate="{StaticResource WrappedButtonCaption}" />
+                            <Button x:Uid="A760InitializeButton" x:Name="A760InitializeButton" IsEnabled="False"
+                                    Content="Start experimental RAM initialization" Click="OnA760InitializeClick"
+                                    Style="{StaticResource AppButtonStyle}" ContentTemplate="{StaticResource WrappedButtonCaption}" />
+                            <Button x:Uid="A760SaveLogButton" x:Name="A760SaveLogButton" IsEnabled="False"
+                                    Content="Save A760 log" Click="OnA760SaveLogClick"
+                                    Style="{StaticResource AppButtonStyle}" ContentTemplate="{StaticResource WrappedButtonCaption}" />
                             <TextBlock x:Uid="DriverRefreshHint" Text="Refresh after installing or restoring the driver in Device Manager."
                                        Style="{StaticResource HintGrayTextStyle}" TextWrapping="Wrap" />
                         </StackPanel>

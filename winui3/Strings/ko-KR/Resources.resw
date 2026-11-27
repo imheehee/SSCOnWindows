@@ -261,4 +261,16 @@
   <data name="LogToggleButton.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
     <value>활동 로그를 표시하거나 숨깁니다. 로그 기록은 유지됩니다.</value>
   </data>
+  <data name="A760DownloadButton.Content" xml:space="preserve">
+    <value>A760 펌웨어 다운로드 및 검증</value>
+  </data>
+  <data name="A760LocalButton.Content" xml:space="preserve">
+    <value>로컬 A760 펌웨어 검증</value>
+  </data>
+  <data name="A760InitializeButton.Content" xml:space="preserve">
+    <value>실험용 RAM 초기화 시작</value>
+  </data>
+  <data name="A760SaveLogButton.Content" xml:space="preserve">
+    <value>A760 로그 저장</value>
+  </data>
 </root>

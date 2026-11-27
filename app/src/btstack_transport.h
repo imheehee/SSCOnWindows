@@ -12,6 +12,7 @@
 #define BTSTACK_TRANSPORT_H
 
 #include "audio_encoder.h"
+#include "a760_firmware.h"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -36,33 +37,49 @@ public:
     bool init(const char *usb_path = nullptr);
 
     /* Disable HCI packet dump to stdout (call before init for GUI mode) */
-    void set_hci_dump_enabled(bool enabled) { hci_dump_enabled_ = enabled; }
+    void set_hci_dump_enabled(bool enabled) {
+        hci_dump_enabled_ = enabled;
+    }
 
     /* Set file path for HCI packet dump (.pklg format, readable by Wireshark) */
-    void set_hci_dump_file(const std::string &path) { hci_dump_file_ = path; }
+    void set_hci_dump_file(const std::string &path) {
+        hci_dump_file_ = path;
+    }
 
     /* Set directory for persistent link key storage (call before init) */
-    void set_link_key_dir(const std::string &path) { link_key_dir_ = path; }
+    void set_link_key_dir(const std::string &path) {
+        link_key_dir_ = path;
+    }
 
     /* Set directory where firmware files are stored (call before init) */
-    void set_firmware_dir(const std::string &path) { firmware_dir_ = path; }
+    void set_firmware_dir(const std::string &path) {
+        firmware_dir_ = path;
+    }
 
     /* Set Realtek USB Product ID for firmware loading (call before init).
      * 0 = non-Realtek adapter (skip Realtek chipset init). */
-    void set_product_id(uint16_t pid) { product_id_ = pid; }
+    void set_a760_experiment(A760Firmware firmware);
+    const std::string &a760_report() const {
+        return a760_report_;
+    }
+    void set_product_id(uint16_t pid) {
+        product_id_ = pid;
+    }
 
     /* Set firmware stem for unknown chips (pid==0 but firmware files present) */
-    void set_fw_stem(const std::string &stem) { fw_stem_ = stem; }
+    void set_fw_stem(const std::string &stem) {
+        fw_stem_ = stem;
+    }
 
     /* Shut down BTstack and release USB adapter */
     void shutdown();
 
     /* Discovered device info from GAP inquiry */
     struct DiscoveredDevice {
-        uint8_t     address[6];  /* big-endian (BTstack format) */
+        uint8_t address[6]; /* big-endian (BTstack format) */
         std::string name;
-        uint32_t    cod;         /* Class of Device */
-        int8_t      rssi;
+        uint32_t cod; /* Class of Device */
+        int8_t rssi;
     };
 
     /*
@@ -73,7 +90,9 @@ public:
     bool scan_devices(uint8_t duration_seconds = 10);
 
     /* Get devices discovered during last scan_devices() call */
-    const std::vector<DiscoveredDevice> &get_discovered_devices() const { return discovered_devices_; }
+    const std::vector<DiscoveredDevice> &get_discovered_devices() const {
+        return discovered_devices_;
+    }
 
     /*
      * Connect to a remote Bluetooth A2DP sink device.
@@ -141,7 +160,9 @@ public:
     bool set_absolute_volume(uint8_t volume);
 
     /* Get the last absolute volume reported by the device (0-127, 0 = unknown). */
-    uint8_t get_absolute_volume() const { return remote_volume_.load(); }
+    uint8_t get_absolute_volume() const {
+        return remote_volume_.load();
+    }
 
     /* Callback fired (from the BTstack thread) when the device changes volume. */
     void set_volume_changed_callback(std::function<void(uint8_t)> cb);
@@ -180,11 +201,13 @@ public:
         uint8_t ssc_seid = 0;
         /* Remote SSC codec-specific capability byte (0 = unknown/not reported) */
         uint8_t ssc_cap = 0;
-        bool ssc_uhq = false;   /* remote advertised UHQ2/96k bit (0x02) */
+        bool ssc_uhq = false; /* remote advertised UHQ2/96k bit (0x02) */
     };
 
     /* Get discovered remote capabilities (valid after connect_a2dp) */
-    const RemoteCodecCaps &get_remote_caps() const { return remote_caps_; }
+    const RemoteCodecCaps &get_remote_caps() const {
+        return remote_caps_;
+    }
 
 private:
     /* BTstack event handler (static, dispatches to instance) */
@@ -218,19 +241,25 @@ private:
     void *start_event_ = nullptr;
     void *disconnect_event_ = nullptr;
     void *inquiry_event_ = nullptr;
-    void *cancel_event_ = nullptr;       /* manual-reset; signaled to abort blocking waits */
+    void *cancel_event_ = nullptr; /* manual-reset; signaled to abort blocking waits */
 
     /* Result flags for sync operations */
+    A760Firmware a760_firmware_;
+    std::string a760_report_;
+    bool a760_attempted_ = false;
+    bool a760_post_reset_verified_ = false;
+    std::atomic<bool> a760_init_failed_{false};
+    std::atomic<bool> a760_power_started_{false};
     std::atomic<bool> init_result_{false};
     std::atomic<bool> connect_result_{false};
     std::atomic<bool> stream_result_{false};
     std::atomic<bool> start_result_{false};
 
     /* BTstack state */
-    uint16_t a2dp_cid_ = 0;        /* A2DP connection ID */
-    uint16_t avrcp_cid_ = 0;       /* AVRCP connection ID (volume control) */
-    uint8_t local_seid_ = 0;       /* Currently active local SEID */
-    uint8_t remote_seid_ = 0;      /* Currently active remote SEID */
+    uint16_t a2dp_cid_ = 0;   /* A2DP connection ID */
+    uint16_t avrcp_cid_ = 0;  /* AVRCP connection ID (volume control) */
+    uint8_t local_seid_ = 0;  /* Currently active local SEID */
+    uint8_t remote_seid_ = 0; /* Currently active remote SEID */
     uint16_t media_mtu_ = 0;
 
     /* Stream endpoint SEIDs */
@@ -261,11 +290,11 @@ private:
 
     /* Configuration */
     bool hci_dump_enabled_ = true;
-    std::string hci_dump_file_;     /* .pklg file path (empty = no file dump) */
-    std::string link_key_dir_;      /* directory for persistent link keys (empty = memory-only) */
-    std::string firmware_dir_;      /* directory for firmware files (empty = exe dir fallback) */
-    std::string fw_stem_;           /* firmware stem for unknown chips (e.g. "rtl8761bu") */
-    uint16_t product_id_ = 0;      /* Realtek USB Product ID (0 = non-Realtek, skip chipset init) */
+    std::string hci_dump_file_; /* .pklg file path (empty = no file dump) */
+    std::string link_key_dir_;  /* directory for persistent link keys (empty = memory-only) */
+    std::string firmware_dir_;  /* directory for firmware files (empty = exe dir fallback) */
+    std::string fw_stem_;       /* firmware stem for unknown chips (e.g. "rtl8761bu") */
+    uint16_t product_id_ = 0;   /* Realtek USB Product ID (0 = non-Realtek, skip chipset init) */
 
     /* Resolved firmware folder path (must outlive BTstack: chipset_init() is
      * called repeatedly, including from hci_power_control_on()). */
@@ -295,15 +324,15 @@ private:
      * Ring buffer avoids dropping frames when multiple codec frames are
      * produced per WASAPI callback. */
     struct MediaPacket {
-        uint8_t  data[1024];
+        uint8_t data[1024];
         uint32_t size = 0;
         uint32_t timestamp = 0;
-        uint8_t  frames = 0;
+        uint8_t frames = 0;
     };
     static const int MEDIA_QUEUE_CAPACITY = 64;
     MediaPacket media_queue_[MEDIA_QUEUE_CAPACITY];
-    int media_queue_head_ = 0;   /* write position (WASAPI thread) */
-    int media_queue_tail_ = 0;   /* read position (BTstack thread) */
+    int media_queue_head_ = 0; /* write position (WASAPI thread) */
+    int media_queue_tail_ = 0; /* read position (BTstack thread) */
     std::atomic<int> media_queue_count_{0};
     std::mutex send_mutex_;
 
