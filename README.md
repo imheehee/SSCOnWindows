@@ -74,7 +74,7 @@ Codec fallback priority when the requested codec is unavailable: **SSC > AAC > S
 ## Requirements
 
 - **Windows 10/11 (x64)**
-- **Visual Studio 2022 or newer** with the Desktop C++ workload
+- **Visual Studio 2022 or newer** with the Desktop C++ workload (WinUI requires Visual Studio 2026 18.7 or newer)
 - **CMake** 3.16+ (with CMake 4.x, configure with `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` for wxWidgets 3.2.6)
 - **Git** (submodules + wxWidgets FetchContent)
 - A **dedicated USB Bluetooth dongle** (do not reuse the PC's built-in Bluetooth)
@@ -85,10 +85,9 @@ Codec fallback priority when the requested codec is unavailable: **SSC > AAC > S
 
 ### 1. Dedicated dongle drivers
 
-The app includes an in-app **WinUSB ↔ BTHUSB toggle** (no Zadig needed) in the WinUI *Streaming Mode (Dongle)* panel:
-
-- **Enable Streaming (WinUSB)** — signs and installs a generic Microsoft WinUSB INF for the dongle (raises a UAC prompt; blocked while streaming), then re-evaluates the device.
-- **Restore Windows BT (BTHUSB)** — removes only the WinUSB-flavored driver package and lets Windows re-install its own Bluetooth driver.
+Use the WinUI **Troubleshooting** panel to check the driver state and view
+installation or restoration instructions. Use Device Manager with a trusted
+signed package for the dedicated USB dongle. See the [driver setup guide](docs/setup.md).
 
 Tested dongle: **TP-Link UB500** (`VID_2357&PID_0604`), a Realtek RTL8761BU adapter.
 
@@ -102,6 +101,18 @@ Realtek-based dongles need proprietary firmware. Intel and CSR adapters do not.
 2. Put both in `%APPDATA%\A2DPWB` (or use the app's **Firmware** dialog to open the folder).
 
 Firmware files are not included (proprietary Realtek binaries).
+
+### 3. Windows x64 ZIP
+
+Download the Windows x64 ZIP from the build workflow artifact or tagged release
+and extract the entire archive. Launch `winui/SSCOnWindows.exe` for WinUI or
+`wx/SSCOnWindows-0.2.0.exe` for the wxWidgets GUI. In wxWidgets, select
+**Settings → Language → 한국어**. Keep the DLLs and other files beside each
+executable.
+
+The ZIP stages Windows App SDK and Visual C++ runtime files. The proprietary SSC
+encoder and Realtek firmware are supplied separately. Use the checkout's
+`setup.ps1` for the WSL2 SSC backend.
 
 ## Building
 
@@ -120,9 +131,10 @@ Output: `build_msvc\app\Release\SSCOnWindows-0.2.0.exe`.
 Build the core library first, then the MSBuild project:
 
 ```powershell
+cmake -S . -B build_msvc -G "Visual Studio 18 2026" -A x64 "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
 cmake --build build_msvc --config Release --target a2dpwb_core -j 8
 $msb = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -find "MSBuild\**\Bin\MSBuild.exe"
-& $msb winui3\A2DPWBWinUI.vcxproj -p:Configuration=Release -p:Platform=x64 -m:8 -t:Build
+& $msb winui3\A2DPWBWinUI.vcxproj -restore -p:Configuration=Release -p:Platform=x64 -m:8 -t:Build
 ```
 
 Output: `winui3\bin\x64\Release\SSCOnWindows.exe`. The app is **unpackaged**, so the whole output folder (bootstrap DLL, WebView2 DLL, `.xbf`, `.pri`, `.winmd`) must travel with the exe.
@@ -139,7 +151,7 @@ git -C extern/btstack apply ..\..\patches\btstack-win-usb-logs.patch
 
 ### GUI (default)
 
-Run `SSCOnWindows.exe`. The interface provides device scan/connect, codec (SSC/AAC/SBC), quality (High/Standard/Mobile), sample rate (48 kHz / 96 kHz UHQ), bitrate slider (auto/snapped to valid values), device volume (AVRCP absolute volume), streaming-mode driver toggle, live stats/sparklines, and a log pane.
+Run `SSCOnWindows.exe`. The interface provides device scan/connect, codec (SSC/AAC/SBC), quality (High/Standard/Mobile), sample rate (48 kHz / 96 kHz UHQ), bitrate slider (auto/snapped to valid values), device volume (AVRCP absolute volume), driver status and setup instructions, live stats/sparklines, and a log pane.
 
 ### CLI
 
@@ -252,3 +264,5 @@ This project builds on the work of many others. Upstream code and libraries:
 - [openssc](https://github.com/sachk/openssc) — SSC codec integration reference
 - [Qiling](https://qiling.io/) — binary emulation framework
 - [fdk-aac](https://github.com/mstorsjo/fdk-aac), [wxWidgets](https://www.wxwidgets.org/), [nlohmann/json](https://github.com/nlohmann/json)
+
+[한국어 설치 및 드라이버 복원 안내](docs/ko/setup.md)

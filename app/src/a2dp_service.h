@@ -28,6 +28,8 @@ class BtStackTransport;
 class WasapiCapture;
 class AudioEncoder;
 
+class A760Firmware;
+
 class A2dpService {
 public:
     A2dpService();
@@ -44,29 +46,37 @@ public:
 
     /* Scanned device entry */
     struct DeviceEntry {
-        uint8_t     address[6];
+        uint8_t address[6];
         std::string name;
-        std::string addr_str;    /* "XX:XX:XX:XX:XX:XX" */
-        bool        audio_device;
-        bool        saved;
+        std::string addr_str; /* "XX:XX:XX:XX:XX:XX" */
+        bool audio_device;
+        bool saved;
     };
 
     /* Stream info for display */
     struct StreamInfo {
         std::string codec;
-        uint32_t    bitrate_kbps;
-        uint32_t    sample_rate;
-        uint32_t    channels;
-        uint32_t    source_sample_rate = 0;
-        uint32_t    source_channels = 0;
-        uint32_t    source_bit_depth = 0;
+        uint32_t bitrate_kbps;
+        uint32_t sample_rate;
+        uint32_t channels;
+        uint32_t source_sample_rate = 0;
+        uint32_t source_channels = 0;
+        uint32_t source_bit_depth = 0;
     };
 
     /* Live stream statistics (1 Hz refresh) */
     struct StreamStats {
+        double encode_mean_ms = 0;
+        double encode_max_ms = 0;
+        double encode_p95_ms = 0;
+        double encode_p99_ms = 0;
+        double frame_budget_ms = 0;
+        uint64_t deadline_exceeded = 0;
+        uint64_t playout_stalls = 0;
+        double pcm_buffer_ms = 0;
         double latency_ms = 0.0;   /* encode round-trip (EWMA) */
         double error_rate = 0.0;   /* send failures / total sends (0..1) */
-        double loss_rate  = 0.0;   /* ring overflow drops / captured (0..1) */
+        double loss_rate = 0.0;    /* ring overflow drops / captured (0..1) */
         uint32_t bitrate_kbps = 0; /* current effective bitrate */
         uint32_t queue_depth = 0;  /* transport queue depth */
         uint64_t total_sends = 0;
@@ -89,15 +99,16 @@ public:
      * receives those over SSP or AVRCP, so there is nothing real to show.
      */
     struct DeviceCaps {
-        bool     known = false;
-        bool     sbc = false;
-        bool     aac = false;
-        bool     ssc = false;
-        bool     ssc_uhq = false;   /* SSC UHQ2 / 96 kHz capability bit */
-        uint8_t  ssc_cap = 0;       /* raw SSC capability octet */
+        bool known = false;
+        bool sbc = false;
+        bool aac = false;
+        bool ssc = false;
+        bool ssc_uhq = false; /* SSC UHQ2 / 96 kHz capability bit */
+        uint8_t ssc_cap = 0;  /* raw SSC capability octet */
     };
 
     DeviceCaps get_device_caps() const;
+    std::string negotiation_log();
 
     /* ---- Callbacks (called from worker threads, must be thread-safe) ---- */
     using StateCallback = std::function<void(State state, const std::string &status_text)>;
@@ -114,22 +125,26 @@ public:
      * 0.0 = mute .. 1.0 = max. Requires an active AVRCP connection. */
     void set_device_volume(float volume);
     float get_device_volume() const;
-    uint8_t get_absolute_volume() const;   /* 0-127, 0 = unknown */
+    uint8_t get_absolute_volume() const; /* 0-127, 0 = unknown */
 
     using VolumeChangedCallback = std::function<void(uint8_t vol_0_127)>;
     void set_volume_changed_callback(VolumeChangedCallback cb);
 
     /* ---- Auto-mute output (Bölüm 1) ---- */
     void set_auto_mute_output(bool enabled);
-    bool get_auto_mute_output() const { return auto_mute_output_; }
+    bool get_auto_mute_output() const {
+        return auto_mute_output_;
+    }
 
     /* ---- Streaming control ---- */
-    void start_streaming(const ConnectionProfile &profile);
+    bool start_streaming(const ConnectionProfile &profile);
     void stop_streaming();
 
     /* ---- Device scanning ---- */
     void start_scan();
-    bool is_scanning() const { return scanning_.load(); }
+    bool is_scanning() const {
+        return scanning_.load();
+    }
 
     /* ---- Device list (thread-safe access) ---- */
     std::vector<DeviceEntry> get_devices() const;
@@ -138,24 +153,49 @@ public:
     void delete_saved_device(int index);
 
     /* ---- State query ---- */
-    State state() const { return state_.load(); }
+    State state() const {
+        return state_.load();
+    }
 
     /* ---- Firmware management ---- */
-    bool is_firmware_present() const { return firmware_present_; }
-    bool is_firmware_downloading() const { return firmware_downloading_.load(); }
-    bool was_firmware_updated() { return firmware_updated_.exchange(false); }
+    bool is_firmware_present() const {
+        return firmware_present_;
+    }
+    bool is_firmware_downloading() const {
+        return firmware_downloading_.load();
+    }
+    bool was_firmware_updated() {
+        return firmware_updated_.exchange(false);
+    }
     std::string firmware_status() const;
     void check_firmware_present();
     void download_firmware();
 
+    // The UI consumes the verified image only after per-session approval.
+    bool start_a760_experiment(A760Firmware firmware, std::string &report);
+    std::string ssc_error();
+    bool bluetooth_busy() const {
+        return running_.load() || scanning_.load();
+    }
+
     /* ---- Bluetooth adapter ---- */
-    void set_bt_chip_pid(uint16_t pid) { bt_chip_pid_ = pid; }
-    uint16_t get_bt_chip_pid() const { return bt_chip_pid_; }
-    void set_bt_chip_fw_stem(const std::string &stem) { bt_chip_fw_stem_ = stem; }
-    const std::string &get_bt_chip_fw_stem() const { return bt_chip_fw_stem_; }
+    void set_bt_chip_pid(uint16_t pid) {
+        bt_chip_pid_ = pid;
+    }
+    uint16_t get_bt_chip_pid() const {
+        return bt_chip_pid_;
+    }
+    void set_bt_chip_fw_stem(const std::string &stem) {
+        bt_chip_fw_stem_ = stem;
+    }
+    const std::string &get_bt_chip_fw_stem() const {
+        return bt_chip_fw_stem_;
+    }
 
     /* ---- Debug ---- */
-    void set_debug_mode(bool enabled) { debug_mode_ = enabled; }
+    void set_debug_mode(bool enabled) {
+        debug_mode_ = enabled;
+    }
 
     /* Force BTstack shutdown so next connect reinitializes with new settings */
     void reset_btstack();
@@ -167,6 +207,7 @@ public:
 private:
     /* ---- BTstack lifecycle ---- */
     bool ensure_btstack_init();
+    bool initialize_btstack_locked(A760Firmware *firmware, std::string *report);
     void shutdown_btstack();
 
     /* ---- Scanning thread ---- */
@@ -189,7 +230,7 @@ private:
      * 3 = SSC, 4 = SSC UHQ2/96 kHz). Written on the worker thread right
      * after A2DP discovery, read from the UI thread. */
     std::atomic<uint32_t> device_caps_bits_{0};
-    std::atomic<uint8_t>  device_ssc_cap_{0};
+    std::atomic<uint8_t> device_ssc_cap_{0};
     void set_device_caps(bool sbc, bool aac, bool ssc, bool ssc_uhq, uint8_t ssc_cap);
 
     /* ---- Callbacks ---- */
@@ -199,6 +240,8 @@ private:
     StatsCallback stats_cb_;
     VolumeChangedCallback volume_cb_;
     std::mutex cb_mutex_;
+    std::mutex ssc_error_mutex_;
+    std::string ssc_error_;
 
     void notify_state(State s, const std::string &text);
     void notify_stream_info(const StreamInfo &info);
@@ -230,12 +273,12 @@ private:
     std::wstring original_default_device_;
 
     /* ---- Bluetooth adapter ---- */
-    uint16_t bt_chip_pid_ = 0;  /* 0 = auto-detect */
-    std::string bt_chip_fw_stem_;  /* Firmware stem for unknown chips (pid==0) */
+    uint16_t bt_chip_pid_ = 0;    /* 0 = auto-detect */
+    std::string bt_chip_fw_stem_; /* Firmware stem for unknown chips (pid==0) */
 
     /* ---- Debug ---- */
     bool debug_mode_ = false;
-    bool auto_mute_output_ = true;  /* auto-mute speakers while streaming */
+    bool auto_mute_output_ = true; /* auto-mute speakers while streaming */
 
     /* ---- Firmware ---- */
     bool firmware_present_ = false;

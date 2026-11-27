@@ -92,3 +92,18 @@ TEST_CASE("mock transport: no compatible codec -> negotiation fails") {
     uint32_t sr;
     CHECK_FALSE(t.negotiate(AudioCodec::SSC, 48000, 48000, &codec, &sr, nullptr, nullptr));
 }
+TEST_CASE("SSC selects an advertised legacy sample rate and one wire rate bit") {
+    CHECK(codec_policy::ssc_capture_rate(0x38, 44100) == 44100);
+    CHECK(codec_policy::ssc_capture_rate(0x38, 0) == 48000);
+    CHECK(codec_policy::ssc_capture_rate(0x28, 48000) == 44100);
+    CHECK(codec_policy::ssc_capture_rate(0x18, 44100) == 48000);
+    CHECK(codec_policy::ssc_configuration(0x38, 44100) == 0x28);
+    CHECK(codec_policy::ssc_configuration(0x38, 48000) == 0x18);
+    CHECK(codec_policy::ssc_configuration(0x18, 44100) == 0);
+    CHECK(codec_policy::ssc_configuration(0x28, 48000) == 0);
+    CHECK(codec_policy::ssc_configuration(0x3c, 48000) == 0x0c);
+    CHECK(codec_policy::ssc_configuration(0x3e, 96000) == 0x0e);
+    CHECK(codec_policy::ssc_configuration(0x38, 96000) == 0);
+    CHECK(codec_policy::ssc_legacy_mode(0x28));
+    CHECK_FALSE(codec_policy::ssc_legacy_mode(0x0c));
+}

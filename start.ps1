@@ -29,11 +29,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$Repo      = 'C:\Projects\SSCOnWindows'
+$Repo      = $PSScriptRoot
 $BuildDir  = Join-Path $Repo 'build_msvc'
-$BuildExe  = Join-Path $BuildDir 'app\Release\SSCOnWindows-0.1.exe'
-$DistDir   = 'C:\Projects\SSCOnWindows\dist'
-$DistExe   = Join-Path $DistDir 'SSCOnWindows-0.1.exe'
+$BuildExe  = Join-Path $BuildDir 'app\Release\SSCOnWindows-0.2.0.exe'
+$DistDir   = Join-Path $Repo 'dist'
+$DistExe   = Join-Path $DistDir 'SSCOnWindows-0.2.0.exe'
 $OutLog    = Join-Path $env:TEMP 'a2dpwb_out.txt'
 $ErrLog    = Join-Path $env:TEMP 'a2dpwb_err.txt'
 $ConfigFile = Join-Path $PSScriptRoot 'config.json'
@@ -91,6 +91,7 @@ if (-not (Test-Path $BuildExe)) {
 Stop-Instance
 
 Write-Host 'Deploying to dist...'
+New-Item -ItemType Directory -Path $DistDir -Force | Out-Null
 Copy-Item $BuildExe $DistExe -Force
 if (-not (Test-Path $DistExe)) { throw 'Deploy failed.' }
 Write-Host "Deployed $DistExe"

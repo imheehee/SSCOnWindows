@@ -16,19 +16,21 @@
 
 struct ConnectionProfile {
     std::string name;
-    std::string device_address;   /* XX:XX:XX:XX:XX:XX */
+    std::string device_address; /* XX:XX:XX:XX:XX:XX */
     std::string device_name;
-    std::string codec;            /* ssc, aac, sbc */
-    std::string quality;          /* hq, sq, mq */
-    uint32_t    bitrate_kbps = 0; /* 0=auto (from quality), else explicit kbps */
-    uint32_t sample_rate = 0;     /* 0=auto, 44100, 48000, 88200, 96000 */
-    uint32_t bit_depth = 0;       /* 0=auto, 16, 24 */
-    std::string capture_mode;     /* "loopback", "virtual" */
-    std::string audio_device_id;  /* WASAPI device ID for virtual mode */
-    std::string audio_device_name; /* display name */
-    bool auto_switch_device = true;  /* auto-switch default for Virtual Device mode */
-    std::string link_key;         /* 32-hex persistent link key (empty = not stored) */
-    int link_key_type = 0;        /* link_key_type_t value (0 = combination key) */
+    std::string codec;              /* ssc, aac, sbc */
+    std::string quality;            /* hq, sq, mq */
+    uint32_t bitrate_kbps = 0;      /* 0=auto (from quality), else explicit kbps */
+    uint32_t sample_rate = 0;       /* 0=auto, 44100, 48000, 88200, 96000 */
+    uint32_t bit_depth = 0;         /* 0=auto, 16, 24 */
+    std::string capture_mode;       /* "loopback", "virtual" */
+    std::string audio_device_id;    /* WASAPI device ID for virtual mode */
+    std::string audio_device_name;  /* display name */
+    uint32_t audio_buffer_ms = 40;  /* stream pre-roll */
+    bool ssc_native = false;        /* runtime selection from WinUI settings */
+    bool auto_switch_device = true; /* auto-switch default for Virtual Device mode */
+    std::string link_key;           /* 32-hex persistent link key (empty = not stored) */
+    int link_key_type = 0;          /* link_key_type_t value (0 = combination key) */
 };
 
 class ProfileManager {
@@ -40,7 +42,9 @@ public:
     void save() const;
 
     /* Get all profiles */
-    const std::vector<ConnectionProfile> &profiles() const { return profiles_; }
+    const std::vector<ConnectionProfile> &profiles() const {
+        return profiles_;
+    }
 
     /* Add a new profile. Returns index. */
     size_t add(const ConnectionProfile &profile);

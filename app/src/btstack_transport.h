@@ -12,6 +12,9 @@
 #define BTSTACK_TRANSPORT_H
 
 #include "audio_encoder.h"
+#include "a760_firmware.h"
+#include "audio_timing.h"
+#include "audio_codec_config.h"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -36,33 +39,56 @@ public:
     bool init(const char *usb_path = nullptr);
 
     /* Disable HCI packet dump to stdout (call before init for GUI mode) */
-    void set_hci_dump_enabled(bool enabled) { hci_dump_enabled_ = enabled; }
+    void set_hci_dump_enabled(bool enabled) {
+        hci_dump_enabled_ = enabled;
+    }
 
     /* Set file path for HCI packet dump (.pklg format, readable by Wireshark) */
-    void set_hci_dump_file(const std::string &path) { hci_dump_file_ = path; }
+    void set_hci_dump_file(const std::string &path) {
+        hci_dump_file_ = path;
+    }
 
     /* Set directory for persistent link key storage (call before init) */
-    void set_link_key_dir(const std::string &path) { link_key_dir_ = path; }
+    void set_link_key_dir(const std::string &path) {
+        link_key_dir_ = path;
+    }
 
     /* Set directory where firmware files are stored (call before init) */
-    void set_firmware_dir(const std::string &path) { firmware_dir_ = path; }
+    void set_firmware_dir(const std::string &path) {
+        firmware_dir_ = path;
+    }
 
     /* Set Realtek USB Product ID for firmware loading (call before init).
      * 0 = non-Realtek adapter (skip Realtek chipset init). */
-    void set_product_id(uint16_t pid) { product_id_ = pid; }
+    void set_a760_experiment(A760Firmware firmware);
+    std::string negotiation_log();
+    bool hci_ready() const {
+        return hci_ready_.load();
+    }
+    bool uses_a760() const {
+        return !a760_firmware_.device_path().empty();
+    }
+    const std::string &a760_report() const {
+        return a760_report_;
+    }
+    void set_product_id(uint16_t pid) {
+        product_id_ = pid;
+    }
 
     /* Set firmware stem for unknown chips (pid==0 but firmware files present) */
-    void set_fw_stem(const std::string &stem) { fw_stem_ = stem; }
+    void set_fw_stem(const std::string &stem) {
+        fw_stem_ = stem;
+    }
 
     /* Shut down BTstack and release USB adapter */
     void shutdown();
 
     /* Discovered device info from GAP inquiry */
     struct DiscoveredDevice {
-        uint8_t     address[6];  /* big-endian (BTstack format) */
+        uint8_t address[6]; /* big-endian (BTstack format) */
         std::string name;
-        uint32_t    cod;         /* Class of Device */
-        int8_t      rssi;
+        uint32_t cod; /* Class of Device */
+        int8_t rssi;
     };
 
     /*
@@ -73,7 +99,9 @@ public:
     bool scan_devices(uint8_t duration_seconds = 10);
 
     /* Get devices discovered during last scan_devices() call */
-    const std::vector<DiscoveredDevice> &get_discovered_devices() const { return discovered_devices_; }
+    const std::vector<DiscoveredDevice> &get_discovered_devices() const {
+        return discovered_devices_;
+    }
 
     /*
      * Connect to a remote Bluetooth A2DP sink device.
@@ -107,7 +135,21 @@ public:
      * Must be called after connect_a2dp() succeeds.
      * If codec is not supported by remote, returns false.
      */
-    bool configure_codec(AudioCodec codec, uint32_t sample_rate, uint8_t channels);
+    bool configure_codec(AudioCodec codec, uint32_t sample_rate, uint8_t channels,
+                         EncoderQuality quality = EncoderQuality::High);
+    uint32_t compatible_capture_rate(AudioCodec codec, uint32_t preferred) const;
+    uint32_t negotiated_aac_bitrate() const {
+        return aac_bitrate_;
+    }
+    bool negotiated_aac_mpeg2() const {
+        return aac_mpeg2_;
+    }
+    uint8_t negotiated_sbc_bitpool() const {
+        return sbc_bitpool_;
+    }
+    uint8_t negotiated_sbc_mode() const {
+        return sbc_mode_;
+    }
 
     /* Start A2DP streaming. Blocks until AVDTP Start is acknowledged. */
     bool start_stream();
@@ -141,7 +183,9 @@ public:
     bool set_absolute_volume(uint8_t volume);
 
     /* Get the last absolute volume reported by the device (0-127, 0 = unknown). */
-    uint8_t get_absolute_volume() const { return remote_volume_.load(); }
+    uint8_t get_absolute_volume() const {
+        return remote_volume_.load();
+    }
 
     /* Callback fired (from the BTstack thread) when the device changes volume. */
     void set_volume_changed_callback(std::function<void(uint8_t)> cb);
@@ -170,21 +214,30 @@ public:
     bool check_disconnected();
 
     /* Codec support flags discovered from remote device */
+    void set_playout_buffer(uint32_t ms) {
+        playout_buffer_ms_ = ms;
+    }
+    uint64_t playout_stalls() const {
+        return playout_stalls_.load();
+    }
+
     struct RemoteCodecCaps {
         bool sbc = false;
         bool aac = false;
         bool ssc = false;
         /* Remote SEIDs for each codec */
-        uint8_t sbc_seid = 0;
-        uint8_t aac_seid = 0;
+        std::vector<audio_codec_config::SbcCaps> sbc_seps;
+        std::vector<audio_codec_config::AacCaps> aac_seps;
         uint8_t ssc_seid = 0;
         /* Remote SSC codec-specific capability byte (0 = unknown/not reported) */
         uint8_t ssc_cap = 0;
-        bool ssc_uhq = false;   /* remote advertised UHQ2/96k bit (0x02) */
+        bool ssc_uhq = false; /* remote advertised UHQ2/96k bit (0x02) */
     };
 
     /* Get discovered remote capabilities (valid after connect_a2dp) */
-    const RemoteCodecCaps &get_remote_caps() const { return remote_caps_; }
+    const RemoteCodecCaps &get_remote_caps() const {
+        return remote_caps_;
+    }
 
 private:
     /* BTstack event handler (static, dispatches to instance) */
@@ -206,6 +259,9 @@ private:
 
     /* Signal a waiting synchronous call */
     void signal_event(void *event_handle, bool success);
+    void log_negotiation(const char *format, ...);
+    std::mutex negotiation_mutex_;
+    std::string negotiation_log_;
     bool wait_for_event(void *event_handle, uint32_t timeout_ms);
 
     /* Thread handle */
@@ -218,22 +274,33 @@ private:
     void *start_event_ = nullptr;
     void *disconnect_event_ = nullptr;
     void *inquiry_event_ = nullptr;
-    void *cancel_event_ = nullptr;       /* manual-reset; signaled to abort blocking waits */
+    void *cancel_event_ = nullptr; /* manual-reset; signaled to abort blocking waits */
 
     /* Result flags for sync operations */
+    A760Firmware a760_firmware_;
+    std::string a760_report_;
+    bool a760_attempted_ = false;
+    bool a760_post_reset_verified_ = false;
+    std::atomic<bool> a760_init_failed_{false};
+    std::atomic<bool> a760_power_started_{false};
     std::atomic<bool> init_result_{false};
     std::atomic<bool> connect_result_{false};
     std::atomic<bool> stream_result_{false};
     std::atomic<bool> start_result_{false};
 
     /* BTstack state */
-    uint16_t a2dp_cid_ = 0;        /* A2DP connection ID */
-    uint16_t avrcp_cid_ = 0;       /* AVRCP connection ID (volume control) */
-    uint8_t local_seid_ = 0;       /* Currently active local SEID */
-    uint8_t remote_seid_ = 0;      /* Currently active remote SEID */
+    std::atomic<uint16_t> a2dp_cid_{0}; /* A2DP connection ID */
+    uint16_t avrcp_cid_ = 0;            /* AVRCP connection ID (volume control) */
+    uint8_t local_seid_ = 0;            /* Currently active local SEID */
+    uint8_t remote_seid_ = 0;           /* Currently active remote SEID */
     uint16_t media_mtu_ = 0;
 
     /* Stream endpoint SEIDs */
+    EncoderQuality quality_ = EncoderQuality::High;
+    uint32_t aac_bitrate_ = 0;
+    bool aac_mpeg2_ = false;
+    uint8_t sbc_bitpool_ = 53;
+    uint8_t sbc_mode_ = 4;
     uint8_t sbc_local_seid_ = 0;
     uint8_t aac_local_seid_ = 0;
     uint8_t ssc_local_seid_ = 0;
@@ -261,11 +328,11 @@ private:
 
     /* Configuration */
     bool hci_dump_enabled_ = true;
-    std::string hci_dump_file_;     /* .pklg file path (empty = no file dump) */
-    std::string link_key_dir_;      /* directory for persistent link keys (empty = memory-only) */
-    std::string firmware_dir_;      /* directory for firmware files (empty = exe dir fallback) */
-    std::string fw_stem_;           /* firmware stem for unknown chips (e.g. "rtl8761bu") */
-    uint16_t product_id_ = 0;      /* Realtek USB Product ID (0 = non-Realtek, skip chipset init) */
+    std::string hci_dump_file_; /* .pklg file path (empty = no file dump) */
+    std::string link_key_dir_;  /* directory for persistent link keys (empty = memory-only) */
+    std::string firmware_dir_;  /* directory for firmware files (empty = exe dir fallback) */
+    std::string fw_stem_;       /* firmware stem for unknown chips (e.g. "rtl8761bu") */
+    uint16_t product_id_ = 0;   /* Realtek USB Product ID (0 = non-Realtek, skip chipset init) */
 
     /* Resolved firmware folder path (must outlive BTstack: chipset_init() is
      * called repeatedly, including from hci_power_control_on()). */
@@ -295,17 +362,27 @@ private:
      * Ring buffer avoids dropping frames when multiple codec frames are
      * produced per WASAPI callback. */
     struct MediaPacket {
-        uint8_t  data[1024];
+        uint8_t data[1024];
         uint32_t size = 0;
         uint32_t timestamp = 0;
-        uint8_t  frames = 0;
+        bool marker = false;
     };
     static const int MEDIA_QUEUE_CAPACITY = 64;
     MediaPacket media_queue_[MEDIA_QUEUE_CAPACITY];
-    int media_queue_head_ = 0;   /* write position (WASAPI thread) */
-    int media_queue_tail_ = 0;   /* read position (BTstack thread) */
+    int media_queue_head_ = 0; /* write position (WASAPI thread) */
+    int media_queue_tail_ = 0; /* read position (BTstack thread) */
     std::atomic<int> media_queue_count_{0};
     std::mutex send_mutex_;
+
+    void request_media_when_due();
+    void reset_media_playout();
+    void *media_timer_ = nullptr;
+    void *media_waitable_timer_ = nullptr;
+    bool media_timer_pending_ = false;
+    bool media_can_send_pending_ = false;
+    uint32_t playout_buffer_ms_ = 36;
+    audio_timing::MediaClock media_clock_;
+    std::atomic<uint64_t> playout_stalls_{0};
 
     /* Trigger CAN_SEND_NOW from WASAPI thread without busy-looping.
      * Stored as void* to avoid exposing btstack_context_callback_registration_t. */

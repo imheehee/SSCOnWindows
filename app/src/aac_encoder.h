@@ -21,8 +21,12 @@ public:
     AacEncoder();
     ~AacEncoder() override;
 
-    AudioCodec codec_type() const override { return AudioCodec::AAC; }
-    const char *codec_name() const override { return "AAC"; }
+    AudioCodec codec_type() const override {
+        return AudioCodec::AAC;
+    }
+    const char *codec_name() const override {
+        return "AAC";
+    }
 
     bool init(uint16_t mtu, EncoderQuality quality,
               uint32_t sample_rate, uint32_t channels) override;
@@ -36,8 +40,15 @@ public:
 
     void shutdown() override;
 
+    void set_negotiated(uint32_t bitrate, bool mpeg2) {
+        negotiated_bitrate_ = bitrate;
+        mpeg2_ = mpeg2;
+    }
+
 private:
-    void *aac_enc_ = nullptr;   /* HANDLE_AACENCODER */
+    uint32_t negotiated_bitrate_ = 0;
+    bool mpeg2_ = false;
+    void *aac_enc_ = nullptr; /* HANDLE_AACENCODER */
     bool initialized_ = false;
     uint16_t mtu_ = 0;
     uint32_t sample_rate_ = 0;

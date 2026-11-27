@@ -2,8 +2,10 @@
 
 #include "MainWindow.g.h"
 #include "app_settings.h"
+#include "a760_firmware.h"
 
 #include <deque>
+#include <optional>
 
 namespace winrt::A2DPWBWinUI::implementation
 {
@@ -24,6 +26,8 @@ namespace winrt::A2DPWBWinUI::implementation
         void OnDeviceSelectionChanged(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
         void OnCodecChanged(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
         void OnQualityChanged(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
+        void OnPageSizeChanged(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::SizeChangedEventArgs const&);
+        uint32_t SelectedSampleRate() const;
         void OnRateChanged(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
         void OnBitDepthChanged(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
         void OnBitrateChanged(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::Controls::Primitives::RangeBaseValueChangedEventArgs const&);
@@ -36,6 +40,21 @@ namespace winrt::A2DPWBWinUI::implementation
         void OnSetupClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
         void OnEnableStreamingClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
         void OnRestoreBtClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+        void OnAudioBufferPresetChanged(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
+        void OnAudioBufferChanged(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::Controls::Primitives::RangeBaseValueChangedEventArgs const&);
+        void OnA760AutoInitChanged(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+        void OnCopyDiagnosticLog(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+        void OnSaveDiagnosticLog(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+        void OnSscEngineChanged(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
+        void OnSscInstallClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+        void OnSscDiagnoseClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+        void OnSscTestClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+        void OnA760DiagnosticsClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+        void OnA760DownloadClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+        void OnA760LocalClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+        void OnA760InitializeClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+        void OnA760SaveLogClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+        winrt::fire_and_forget RunA760Diagnostics();
         void OnRefreshDriverClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
         void OnToggleLogClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
 
@@ -62,12 +81,25 @@ namespace winrt::A2DPWBWinUI::implementation
         void SetStreamingUi(bool streaming);
         void RememberLastDevice(const std::string& mac, const std::string& name);
         void ShowSetupGuide();
-        void RunDriverSwitch(bool enable_winusb);
+        void ShowDriverInstructions(bool enable_winusb);
+
+        winrt::fire_and_forget RunSscCheck(bool selfTest);
+        winrt::fire_and_forget InstallSscEncoder();
+        void SetSscBusy(bool busy);
+        bool sscBusy_{ false };
+        winrt::fire_and_forget VerifyA760Firmware(std::filesystem::path directory);
+        winrt::fire_and_forget InitializeA760(bool atStartup = false);
+        std::string diagnostic_log_;
+        void SetA760Busy(bool busy);
+        void ShowA760Result(std::string result);
+        bool a760Busy_{ false };
+        bool a760Active_{ false };
+        std::optional<A760Firmware> a760Firmware_;
+        std::string a760Log_;
 
         A2dpService::DeviceEntry selectedDevice_{};
         bool hasSelectedDevice_{ false };
         bool uiReady_{ false };
-        bool driverBusy_{ false };
         int selectedCodecIndex_{ 0 };
         int selectedQualityIndex_{ 0 };
         int selectedRateIndex_{ 0 };

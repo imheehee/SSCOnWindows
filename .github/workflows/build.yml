@@ -73,7 +73,7 @@ jobs:
 
   build-winui:
     name: WinUI 3 GUI (${{ matrix.config }})
-    runs-on: windows-2022
+    runs-on: windows-2025-vs2026
     strategy:
       fail-fast: false
       matrix:
@@ -88,15 +88,17 @@ jobs:
           git -C extern/btstack apply ../../patches/btstack-win-usb-logs.patch 2>/dev/null || echo "patch skipped (already applied / incompatible)"
       - name: Configure CMake
         shell: pwsh
-        run: cmake -S . -B build_msvc -A x64 "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+        run: cmake -S . -B build_msvc -G "Visual Studio 18 2026" -A x64 "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
       - name: Build a2dpwb_core (pulls btstack/sbc_codec/fdk-aac dep targets)
         shell: pwsh
         run: cmake --build build_msvc --config ${{ matrix.config }} --target a2dpwb_core -j 2
       - uses: microsoft/setup-msbuild@v2
+        with:
+          msbuild-architecture: x64
       - name: Build WinUI 3 GUI
         shell: pwsh
         run: |
-          msbuild "winui3\A2DPWBWinUI.vcxproj" -p:Configuration=${{ matrix.config }} -p:Platform=x64 -p:PlatformToolset=v143 -m:2
+          msbuild "winui3\A2DPWBWinUI.vcxproj" -restore -p:Configuration=${{ matrix.config }} -p:Platform=x64 -m:2
       - name: Upload WinUI payload
         uses: actions/upload-artifact@v4
         with:

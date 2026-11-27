@@ -22,15 +22,18 @@ extern "C" {
 }
 
 /* SBC configuration constants */
-static constexpr uint8_t SBC_NUM_BLOCKS   = 16;
+static constexpr uint8_t SBC_NUM_BLOCKS = 16;
 static constexpr uint8_t SBC_NUM_SUBBANDS = 8;
 
 /* Quality -> bitpool mapping (Joint Stereo) */
 static uint8_t quality_to_bitpool(EncoderQuality q) {
     switch (q) {
-    case EncoderQuality::High:     return 53;
-    case EncoderQuality::Standard: return 35;
-    case EncoderQuality::Mobile:   return 19;
+    case EncoderQuality::High:
+        return 53;
+    case EncoderQuality::Standard:
+        return 35;
+    case EncoderQuality::Mobile:
+        return 19;
     }
     return 53;
 }
@@ -58,7 +61,7 @@ bool SbcEncoder::init(uint16_t mtu, EncoderQuality quality,
         return false;
     }
 
-    bitpool_ = quality_to_bitpool(quality);
+    bitpool_ = negotiated_bitpool_ ? negotiated_bitpool_ : quality_to_bitpool(quality);
 
     /* Allocate and initialize the Bluedroid SBC encoder */
     auto *state = static_cast<btstack_sbc_encoder_bluedroid_t *>(
@@ -78,9 +81,10 @@ bool SbcEncoder::init(uint16_t mtu, EncoderQuality quality,
     }
     sbc_instance_ = inst;
 
-    btstack_sbc_channel_mode_t ch_mode = (channels == 1)
-        ? SBC_CHANNEL_MODE_MONO
-        : SBC_CHANNEL_MODE_JOINT_STEREO;
+    const btstack_sbc_channel_mode_t ch_mode = negotiated_mode_
+                                                   ? static_cast<btstack_sbc_channel_mode_t>(negotiated_mode_ - 1)
+                                               : channels == 1 ? SBC_CHANNEL_MODE_MONO
+                                                               : SBC_CHANNEL_MODE_JOINT_STEREO;
 
     uint8_t status = inst->configure(
         state, SBC_MODE_STANDARD,
@@ -111,11 +115,11 @@ bool SbcEncoder::init(uint16_t mtu, EncoderQuality quality,
     if (sbc_frame_length_ == 0) {
         uint32_t header = 4 + (4u * SBC_NUM_SUBBANDS * channels) / 8;
         uint32_t data_bits;
-        if (channels == 2) {
-            /* Joint Stereo */
+        if (ch_mode == SBC_CHANNEL_MODE_JOINT_STEREO) {
             data_bits = SBC_NUM_SUBBANDS + (uint32_t)SBC_NUM_BLOCKS * bitpool_;
+        } else if (ch_mode == SBC_CHANNEL_MODE_STEREO) {
+            data_bits = (uint32_t)SBC_NUM_BLOCKS * bitpool_;
         } else {
-            /* Mono */
             data_bits = (uint32_t)SBC_NUM_BLOCKS * channels * bitpool_;
         }
         sbc_frame_length_ = header + (data_bits + 7) / 8;
@@ -127,9 +131,9 @@ bool SbcEncoder::init(uint16_t mtu, EncoderQuality quality,
     initialized_ = true;
 
     fprintf(stderr, "SbcEncoder: Initialized (rate=%u, ch=%u, mtu=%u, bitpool=%u, "
-           "frame_len=%u, pcm_frames=%u, bitrate=%ukbps)\n",
-           sample_rate, channels, mtu, bitpool_,
-           sbc_frame_length_, pcm_frames_per_sbc_frame_, get_bitrate_kbps());
+                    "frame_len=%u, pcm_frames=%u, bitrate=%ukbps)\n",
+            sample_rate, channels, mtu, bitpool_,
+            sbc_frame_length_, pcm_frames_per_sbc_frame_, get_bitrate_kbps());
     return true;
 }
 

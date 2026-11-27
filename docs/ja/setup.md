@@ -24,17 +24,13 @@ nav_order: 1
 
 ## 手順 1: ドングルを WinUSB に切り替える
 
-SSC On Windows は WinUSB 経由で USB Bluetooth アダプターと直接通信します。**専用のアダプター**が必要です。内蔵 Bluetooth は通常の Windows Bluetooth として引き続き使用できます。Zadig は不要です -- アプリがドライバーのインストールと削除を行います。
+SSC On Windows は、専用の USB Bluetooth アダプターと WinUSB 経由で通信します。
 
-1. USB Bluetooth アダプターを接続
-2. `SSCOnWindows.exe` を起動
-3. **Streaming Mode (Dongle)** パネルで **Enable Streaming (WinUSB)** をクリック
-4. UAC プロンプトを受け入れる（自己署名 WinUSB INF + カタログが生成・署名・インストールされます）
+1. ストリーミングを停止し、デバイス マネージャーで専用アダプターのハードウェア ID と現在のドライバーを確認します。
+2. そのアダプターに対応する信頼済みの署名付き WinUSB ドライバーを、デバイス マネージャーからインストールします。署名の検証に失敗した場合は作業を中止し、Secure Boot や署名の設定は変更しません。
+3. WinUI の **Troubleshooting** で状態を更新します。この表示は TP-Link UB500（`2357:0604`）または Realtek RTL8761BU（`0BDA:8771`）を 1 台接続した場合に利用できます。他の機種はデバイス マネージャーで確認してください。
 
-戻すには **Restore Windows BT (BTHUSB)** をクリックします。
-
-{: .warning }
-PC の**内蔵** Bluetooth アダプターでは絶対にドライバーを切り替えないでください。すべての通常 Bluetooth（キーボード、マウス、オーディオ）が使えなくなり、デバイスマネージャーやシステムの復元が必要になる場合があります。必ず別の専用ドングルを使用してください。
+元に戻すには、同じデバイスで **ドライバーを元に戻す** を選ぶか、元の署名付き Bluetooth ドライバーを選びます。復元後に、Windows Bluetooth でペアリングと再生ができることを確認します。
 
 ## 手順 2: ヘッドホンの Bluetooth アドレスを確認
 

@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <string>
+#include <filesystem>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -34,7 +35,14 @@ public:
                 uint8_t *out, size_t out_cap, size_t *out_size) override;
     bool recover() override;
     void shutdown() override;
-    bool connected() const override { return connected_ && sock_ != INVALID_SOCKET; }
+    bool connected() const override {
+        return connected_ && sock_ != INVALID_SOCKET;
+    }
+
+    std::string diagnose();
+    const std::string &last_error() const {
+        return last_error_;
+    }
 
 private:
     /* Send the wire-protocol CMD_SHUTDOWN magic so the daemon exits cleanly
@@ -44,15 +52,10 @@ private:
     /* (Re)start the daemon and connect to it for the configured stream. */
     bool start_daemon();
 
-    /* Spawn the Windows-native Qiling daemon (sscblobd.py). */
-    bool start_native_daemon();
-
-    /* Locate the native daemon script (env SSC_DAEMON_PY, exe-relative, repo). */
-    std::string find_native_daemon_script();
-
-    /* Run a wsl.exe command, capture stdout. */
-    std::string run_wsl(const std::string &args);
-
+    std::wstring daemon_command(const std::string &token) const;
+    std::string preflight();
+    std::string last_error_;
+    bool winsock_started_ = false;
     bool native_ = false;
     bool connected_ = false;
     uint32_t sample_rate_ = 48000;
@@ -61,7 +64,9 @@ private:
 
 #ifdef _WIN32
     SOCKET sock_ = INVALID_SOCKET;
-    void *native_proc_ = nullptr;   /* HANDLE to sscblobd.py process */
+    void *process_ = nullptr;
+    void *job_ = nullptr;
+    std::filesystem::path daemon_log_;
 #endif
 };
 

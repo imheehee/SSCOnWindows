@@ -3,15 +3,17 @@ name: release
 on:
   push:
     tags: ['v*']
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
-    name: Build + publish release artifacts
-    runs-on: windows-2022
+  build:
+    name: Build Windows x64 ZIP
+    runs-on: windows-2025-vs2026
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,38 +26,128 @@ jobs:
 
       - name: Configure CMake
         shell: pwsh
-        run: cmake -S . -B build_msvc -A x64 "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+        run: cmake -S . -B build_msvc -G "Visual Studio 18 2026" -A x64 "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+
+      - name: Build a2dpwb_core
+        shell: pwsh
+        run: cmake --build build_msvc --config Release --target a2dpwb_core -j 2
+
+      - uses: microsoft/setup-msbuild@v2
+        with:
+          msbuild-architecture: x64
+
+      - name: Build WinUI 3 GUI
+        shell: pwsh
+        run: |
+          msbuild "winui3\A2DPWBWinUI.vcxproj" -restore -p:Configuration=Release -p:Platform=x64 -m:2
 
       - name: Build CLI (SSCOnWindows-0.2.0.exe; includes wxWidgets FetchContent)
         shell: pwsh
         run: cmake --build build_msvc --config Release --target A2DPWB -j 2
 
-      - uses: microsoft/setup-msbuild@v2
-
-      - name: Build WinUI 3 GUI
-        shell: pwsh
-        run: |
-          msbuild "winui3\A2DPWBWinUI.vcxproj" -p:Configuration=Release -p:Platform=x64 -p:PlatformToolset=v143 -m:2
-
       - name: Stage release payload (no proprietary blob / firmware)
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           $dist = 'dist\SSCOnWindows-0.2.0'
-          New-Item -ItemType Directory -Force -Path $dist | Out-Null
-          Copy-Item 'build_msvc\app\Release\SSCOnWindows-0.2.0.exe' $dist -Force
-          Copy-Item 'winui3\bin\x64\Release\*' $dist -Recurse -Force
-          Copy-Item README.md, LICENSE, THIRD_PARTY_LICENSES.md $dist -Force
+          New-Item -ItemType Directory -Force -Path "$dist\wx", "$dist\winui", "$dist\docs\ko", "$dist\tools" | Out-Null
+          Copy-Item 'build_msvc\app\Release\SSCOnWindows-0.2.0.exe' "$dist\wx"
+          Copy-Item 'winui3\bin\x64\Release\*' "$dist\winui" -Recurse
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$vs) { throw 'Visual Studio C++ redistributable location unavailable.' }
+          $redistVersion = (Get-Content "$vs\VC\Auxiliary\Build\Microsoft.VCRedistVersion.default.txt" -Raw).Trim()
+          $crt = @(Get-ChildItem "$vs\VC\Redist\MSVC\$redistVersion\x64\Microsoft.VC*.CRT\*.dll" -File)
+          if (!$crt.Count) { throw 'Visual C++ x64 app-local CRT DLLs are missing.' }
+          foreach ($dir in "$dist\wx", "$dist\winui") {
+            $crt | Copy-Item -Destination $dir -Force
+          }
+          foreach ($file in 'SSCOnWindows.exe', 'Microsoft.UI.Xaml.dll', 'SSCOnWindows.pri', 'App.xbf', 'MainWindow.xbf') {
+            if (!(Test-Path "$dist\winui\$file" -PathType Leaf)) { throw "Missing WinUI payload: $file" }
+          }
+          $makepri = "${env:ProgramFiles(x86)}\Windows Kits\10\bin\10.0.26100.0\x64\makepri.exe"
+          $priDump = Join-Path $env:RUNNER_TEMP 'ssc-pri.xml'
+          & $makepri Dump -IndexFile "$dist\winui\SSCOnWindows.pri" -OutputFile $priDump -Verbose -Overwrite
+          if ($LASTEXITCODE -ne 0 -or
+              !(Select-String -Path $priDump -SimpleMatch 'A760DiagnosticsButton' -Quiet) -or
+              !(Select-String -Path $priDump -SimpleMatch 'ko-KR' -Quiet)) {
+            throw 'The WinUI PRI is missing the app resources or Korean language qualifier.'
+          }
+          Get-ChildItem "$dist\winui" -Recurse -File -Include *.pdb,*.lib,*.exp |
+            Remove-Item -Force
+          Copy-Item README.md, LICENSE, THIRD_PARTY_LICENSES.md $dist
+          Copy-Item docs/setup.md, docs/compatibility.md "$dist\docs"
+          Copy-Item docs/ko/setup.md "$dist\docs\ko"
+          New-Item -ItemType Directory -Force -Path "$dist\tools\ssc_payload\build_blob", "$dist\tools\ssc_daemon" | Out-Null
+          Copy-Item tools/ssc_setup.ps1 "$dist\tools"
+          foreach ($file in 'sscblobd.c', 'ssc_blob_helper', 'libc.so', 'libdl.so', 'liblog.so', 'libm.so') {
+            Copy-Item "tools\ssc_payload\build_blob\$file" "$dist\tools\ssc_payload\build_blob"
+          }
+          Copy-Item tools/ssc_daemon/sscblobd.py, tools/ssc_daemon/qiling_patches.py "$dist\tools\ssc_daemon"
+          if (Get-ChildItem $dist -Recurse -File -Filter 'libScalable_Encoder.so') { throw 'Samsung encoder must not be included.' }
+          Copy-Item tools/a760_firmware.py "$dist\tools"
           Compress-Archive -Path "$dist\*" -DestinationPath "dist\SSCOnWindows-0.2.0.zip" -Force
           Get-FileHash "dist\SSCOnWindows-0.2.0.zip" -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash)  $([IO.Path]::GetFileName($_.Path))" } |
             Set-Content "dist\SSCOnWindows-0.2.0.zip.sha256" -Encoding ascii
 
-      - name: Create GitHub Release (draft)
+      - name: Smoke test extracted x64 bundle
         shell: pwsh
         run: |
-          gh release create "${{ github.ref_name }}" "dist\SSCOnWindows-0.2.0.zip" "dist\SSCOnWindows-0.2.0.zip.sha256" ``
-            --repo "${{ github.repository }}" --draft `
-            --title "SSC On Windows ${{ github.ref_name }}" `
-            --notes "Binaries only. The proprietary Samsung SSC blob is NOT distributed; see README / THIRD_PARTY_LICENSES.md."
+          $extract = Join-Path $env:RUNNER_TEMP 'ssc-extracted'
+          Expand-Archive 'dist\SSCOnWindows-0.2.0.zip' $extract -Force
+          $exe = Join-Path $extract 'wx\SSCOnWindows-0.2.0.exe'
+          $log = Join-Path $env:RUNNER_TEMP 'ssc-cli-help.txt'
+          $process = Start-Process $exe -ArgumentList '--cli', '-h' -PassThru -RedirectStandardOutput $log
+          if (!$process.WaitForExit(30000)) {
+            Stop-Process -Id $process.Id -Force
+            throw 'Packaged CLI smoke test timed out.'
+          }
+          if ($process.ExitCode -ne 0 -or !(Select-String -Path $log -Pattern 'Usage:' -Quiet)) {
+            throw "Packaged CLI did not produce usage output. Exit code: $($process.ExitCode)"
+          }
+
+      - name: Smoke test A760 diagnostic without USB hardware
+        shell: pwsh
+        run: |
+          $exe = Join-Path $env:RUNNER_TEMP 'ssc-extracted\wx\SSCOnWindows-0.2.0.exe'
+          $log = Join-Path $env:RUNNER_TEMP 'ssc-a760.txt'
+          $process = Start-Process $exe -ArgumentList '--diagnose-a760' -PassThru -RedirectStandardOutput $log
+          if (!$process.WaitForExit(10000)) {
+            Stop-Process -Id $process.Id -Force
+            throw 'A760 diagnostic timed out.'
+          }
+          if ($process.ExitCode -ne 0 -or !(Select-String -Path $log -Pattern '^USB 0BDA:A760 is not present\.' -Quiet)) {
+            throw "Unexpected A760 diagnostic result. Exit code: $($process.ExitCode)"
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SSCOnWindows-win-x64
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+
+  release:
+    name: Create draft release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: SSCOnWindows-win-x64
+          path: dist
+      - name: Create GitHub Release (draft)
+        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$env:RELEASE_TAG" "dist/SSCOnWindows-0.2.0.zip" "dist/SSCOnWindows-0.2.0.zip.sha256" `
+            --repo "$env:GITHUB_REPOSITORY" --draft `
+            --title "SSC On Windows $env:RELEASE_TAG" `
+            --notes "Windows x64 binaries and runtime dependencies. See docs/compatibility.md for firmware and driver setup."

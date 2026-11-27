@@ -24,6 +24,52 @@ if(EXISTS ${BTSTACK_ROOT}/src/hci.c)
     file(GLOB BTSTACK_CLASSIC_SRC ${BTSTACK_ROOT}/src/classic/*.c)
     # Windows platform sources (run loop, WinUSB HCI transport, TLV storage)
     file(GLOB BTSTACK_WINDOWS_SRC ${BTSTACK_ROOT}/platform/windows/*.c)
+    # Bind an experimental session to one interface; generic probing always skips A760.
+    set(BTSTACK_WINUSB ${BTSTACK_ROOT}/platform/windows/hci_transport_h2_winusb.c)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${BTSTACK_WINUSB}")
+    file(READ "${BTSTACK_WINUSB}" winusb_source)
+    set(open_function "static int usb_try_open_device(const char * device_path){")
+    set(setup_async "memset(&usb_overlapped_event_in,")
+    foreach(anchor IN ITEMS open_function setup_async)
+        string(FIND "${winusb_source}" "${${anchor}}" anchor_offset)
+        if(anchor_offset EQUAL -1)
+            message(FATAL_ERROR "Cannot enforce the A760 exact-device WinUSB policy")
+        endif()
+    endforeach()
+    set(selector [=[
+#include "winusb_a760_target.h"
+
+static const char *ssc_a760_path;
+static a760_winusb_prepare_fn ssc_a760_prepare;
+static void *ssc_a760_context;
+
+void ssc_winusb_select_a760(const char *path, a760_winusb_prepare_fn prepare, void *context) {
+    ssc_a760_path = path;
+    ssc_a760_prepare = prepare;
+    ssc_a760_context = context;
+}
+
+static int usb_try_open_device(const char * device_path){
+    if (ssc_a760_path) {
+        if (!ssc_a760_prepare || _stricmp(device_path, ssc_a760_path) != 0) return 0;
+    } else if (strlen(device_path) >= 8 && _strnicmp(device_path + 8, "vid_0bda&pid_a760", 17) == 0) {
+        return 0;
+    }
+]=])
+    string(REPLACE "${open_function}" "${selector}" winusb_source "${winusb_source}")
+    string(REPLACE "FILE_SHARE_WRITE | FILE_SHARE_READ,"
+        "ssc_a760_path ? 0 : (FILE_SHARE_WRITE | FILE_SHARE_READ),"
+        winusb_source "${winusb_source}")
+    string(REPLACE "if (!usb_device_handle) goto exit_on_error;"
+        "if (usb_device_handle == INVALID_HANDLE_VALUE) { usb_device_handle = NULL; goto exit_on_error; }"
+        winusb_source "${winusb_source}")
+    string(REPLACE "${setup_async}"
+        "if (ssc_a760_path && !ssc_a760_prepare(ssc_a760_context, usb_device_handle, usb_interface_0_handle, (uint8_t)event_in_addr)) goto exit_on_error;\n    ${setup_async}"
+        winusb_source "${winusb_source}")
+    list(REMOVE_ITEM BTSTACK_WINDOWS_SRC "${BTSTACK_WINUSB}")
+    set(generated_winusb "${CMAKE_CURRENT_BINARY_DIR}/hci_transport_h2_winusb.c")
+    file(GENERATE OUTPUT "${generated_winusb}" CONTENT "${winusb_source}")
+    list(APPEND BTSTACK_WINDOWS_SRC "${generated_winusb}")
     # 3rd-party dependencies
     set(BTSTACK_3RDPARTY_SRC
         ${BTSTACK_ROOT}/3rd-party/rijndael/rijndael.c

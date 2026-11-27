@@ -7,8 +7,12 @@
  */
 
 #include "btstack_transport.h"
+#include "a760_diagnostics.h"
+#include "winusb_a760_target.h"
 #include "console_style.h"
+#include "codec_policy.h"
 
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <windows.h>
@@ -40,10 +44,10 @@ extern "C" {
  * Vendor codec IDs (duplicated from avdtp.h to avoid enum conflicts
  * with BTstack's avdtp.h which defines the same AVDTP enumerator names)
  */
-#define SSC_VENDOR_ID       0x00000075u  /* Samsung Electronics */
-#define SSC_CODEC_ID        0x0103u      /* Samsung Scalable Codec */
-#define SSC_CAP_BASIC       0x0Cu        /* 44.1/48k at basic bitrates */
-#define SSC_CAP_UHQ         0x0Eu        /* basic + 96k UHQ */
+#define SSC_VENDOR_ID 0x00000075u /* Samsung Electronics */
+#define SSC_CODEC_ID 0x0103u      /* Samsung Scalable Codec */
+#define SSC_CAP_BASIC 0x0Cu       /* 44.1/48k at basic bitrates */
+#define SSC_CAP_UHQ 0x0Eu         /* basic + 96k UHQ */
 
 /* Singleton for static callback dispatch */
 BtStackTransport *BtStackTransport::instance_ = nullptr;
@@ -61,56 +65,75 @@ struct RunLoopRequest {
     btstack_context_callback_registration_t reg;
     HANDLE done_event;
     /* Per-request arguments (union-style, kept simple) */
-    uint8_t  u8_result;
-    int      int_result;
+    uint8_t u8_result;
+    int int_result;
     /* Inquiry */
-    uint8_t  inquiry_duration;
+    uint8_t inquiry_duration;
     /* Connect */
     bd_addr_t addr;
-    uint16_t *cid_out;
     /* Configure */
     uint16_t config_a2dp_cid;
-    uint8_t  config_local_seid;
-    uint8_t  config_remote_seid;
-    uint8_t  config_info[8];
-    uint8_t  config_info_len;
+    uint8_t config_local_seid;
+    uint8_t config_remote_seid;
+    uint8_t config_info[8];
+    uint8_t config_info_len;
     AudioCodec config_codec;
     avdtp_configuration_sbc_t sbc_config;
     avdtp_configuration_mpeg_aac_t aac_config;
     /* Start stream */
     uint16_t start_a2dp_cid;
-    uint8_t  start_local_seid;
+    uint8_t start_local_seid;
 };
 
 /* Timeout constants */
-static const uint32_t INIT_TIMEOUT_MS    = 30000;
-static const uint32_t CONNECT_TIMEOUT_MS = 30000;  /* Must exceed HCI page timeout (~20s) */
-static const uint32_t STREAM_TIMEOUT_MS  = 10000;
+static const uint32_t INIT_TIMEOUT_MS = 30000;
+static const uint32_t CONNECT_TIMEOUT_MS = 30000; /* Must exceed HCI page timeout (~20s) */
+static const uint32_t STREAM_TIMEOUT_MS = 10000;
 static const uint32_t DISCONNECT_TIMEOUT_MS = 5000;
 
 /* HCI error code to string (common codes) */
 static const char *hci_error_string(uint8_t status) {
     switch (status) {
-    case 0x00: return "Success";
-    case 0x01: return "Unknown HCI Command";
-    case 0x02: return "Unknown Connection Identifier";
-    case 0x04: return "Page Timeout";
-    case 0x05: return "Authentication Failure";
-    case 0x06: return "PIN or Key Missing";
-    case 0x07: return "Memory Capacity Exceeded";
-    case 0x08: return "Connection Timeout";
-    case 0x09: return "Connection Limit Exceeded";
-    case 0x0B: return "ACL Connection Already Exists";
-    case 0x0C: return "Command Disallowed";
-    case 0x0D: return "Connection Rejected (Limited Resources)";
-    case 0x0E: return "Connection Rejected (Security)";
-    case 0x0F: return "Connection Rejected (Unacceptable BD_ADDR)";
-    case 0x10: return "Connection Accept Timeout Exceeded";
-    case 0x11: return "Unsupported Feature or Parameter Value";
-    case 0x12: return "Invalid HCI Command Parameters";
-    case 0x13: return "Remote User Terminated Connection";
-    case 0x22: return "LMP Response Timeout / LL Response Timeout";
-    default:   return "Unknown";
+    case 0x00:
+        return "Success";
+    case 0x01:
+        return "Unknown HCI Command";
+    case 0x02:
+        return "Unknown Connection Identifier";
+    case 0x04:
+        return "Page Timeout";
+    case 0x05:
+        return "Authentication Failure";
+    case 0x06:
+        return "PIN or Key Missing";
+    case 0x07:
+        return "Memory Capacity Exceeded";
+    case 0x08:
+        return "Connection Timeout";
+    case 0x09:
+        return "Connection Limit Exceeded";
+    case 0x0B:
+        return "ACL Connection Already Exists";
+    case 0x0C:
+        return "Command Disallowed";
+    case 0x0D:
+        return "Connection Rejected (Limited Resources)";
+    case 0x0E:
+        return "Connection Rejected (Security)";
+    case 0x0F:
+        return "Connection Rejected (Unacceptable BD_ADDR)";
+    case 0x10:
+        return "Connection Accept Timeout Exceeded";
+    case 0x11:
+        return "Unsupported Feature or Parameter Value";
+    case 0x12:
+        return "Invalid HCI Command Parameters";
+    case 0x13:
+        return "Remote User Terminated Connection";
+    case 0x22:
+        return "LMP Response Timeout / LL Response Timeout";
+    default:
+        return "Unknown";
     }
 }
 
@@ -154,10 +177,11 @@ BtStackTransport::BtStackTransport() {
     start_event_ = CreateEventA(nullptr, FALSE, FALSE, nullptr);
     disconnect_event_ = CreateEventA(nullptr, FALSE, FALSE, nullptr);
     inquiry_event_ = CreateEventA(nullptr, FALSE, FALSE, nullptr);
-    cancel_event_ = CreateEventA(nullptr, TRUE, FALSE, nullptr);  /* manual-reset */
+    cancel_event_ = CreateEventA(nullptr, TRUE, FALSE, nullptr); /* manual-reset */
     auto *reg = new btstack_context_callback_registration_t();
     memset(reg, 0, sizeof(*reg));
     media_trigger_reg_ = reg;
+    media_timer_ = new btstack_timer_source_t{};
 }
 
 BtStackTransport::~BtStackTransport() {
@@ -170,14 +194,20 @@ BtStackTransport::~BtStackTransport() {
     CloseHandle(inquiry_event_);
     CloseHandle(cancel_event_);
     delete static_cast<btstack_context_callback_registration_t *>(media_trigger_reg_);
+    delete static_cast<btstack_timer_source_t *>(media_timer_);
 }
 
 /* ======================================================================== */
 /* Initialization                                                           */
 /* ======================================================================== */
 
+void BtStackTransport::set_a760_experiment(A760Firmware firmware) {
+    a760_firmware_ = std::move(firmware);
+    product_id_ = 0;
+}
+
 bool BtStackTransport::init(const char *usb_path) {
-    (void)usb_path;  /* TODO: support specific USB device selection */
+    (void)usb_path; /* TODO: support specific USB device selection */
 
     if (instance_ != nullptr) {
         fprintf(stderr, "BTstack: Only one BtStackTransport instance is supported\n");
@@ -188,9 +218,10 @@ bool BtStackTransport::init(const char *usb_path) {
 
     /* Launch BTstack run loop in a dedicated thread */
     thread_handle_ = CreateThread(nullptr, 0,
-        (LPTHREAD_START_ROUTINE)btstack_thread_proc, this, 0, nullptr);
+                                  (LPTHREAD_START_ROUTINE)btstack_thread_proc, this, 0, nullptr);
     if (!thread_handle_) {
         fprintf(stderr, "BTstack: Failed to create run loop thread\n");
+        running_.store(false);
         instance_ = nullptr;
         return false;
     }
@@ -199,7 +230,8 @@ bool BtStackTransport::init(const char *usb_path) {
     {
         uint32_t elapsed = 0;
         const uint32_t poll_interval = 100;
-        while (elapsed < INIT_TIMEOUT_MS) {
+        const uint32_t timeout = a760_firmware_.device_path().empty() ? INIT_TIMEOUT_MS : 75000;
+        while (elapsed < timeout && !a760_init_failed_.load()) {
             if (init_result_.load()) {
                 fprintf(stderr, "BTstack: HCI ready after %lu ms\n", (unsigned long)elapsed);
                 fflush(stderr);
@@ -262,9 +294,22 @@ unsigned long __stdcall BtStackTransport::btstack_thread_proc(void *param) {
         }
     }
     /* Non-Realtek adapters */
-    hci_transport_usb_add_device(0x0A12, 0x0001);  /* CSR (Cambridge Silicon Radio) */
-    hci_transport_usb_add_device(0x8087, 0x0029);  /* Intel AX200/AX201 */
-    hci_transport_usb_add_device(0x8087, 0x0032);  /* Intel AX210 */
+    hci_transport_usb_add_device(0x0A12, 0x0001); /* CSR (Cambridge Silicon Radio) */
+    hci_transport_usb_add_device(0x8087, 0x0029); /* Intel AX200/AX201 */
+    hci_transport_usb_add_device(0x8087, 0x0032); /* Intel AX210 */
+
+    if (!self->a760_firmware_.device_path().empty()) {
+        ssc_winusb_select_a760(self->a760_firmware_.device_path().c_str(), [](void *context, void *device, void *usb, uint8_t pipe) -> int {
+                auto *transport = static_cast<BtStackTransport *>(context);
+                if (transport->a760_attempted_) return 0;
+                transport->a760_attempted_ = true;
+                try {
+                    return initialize_a760_ram(device, usb, pipe, transport->a760_firmware_.payload(),
+                                               transport->a760_report_) ? 1 : 0;
+                } catch (...) {
+                    return 0;
+                } }, self);
+    }
 
     /* Initialize HCI with WinUSB transport */
     hci_init(hci_transport_usb_instance(), nullptr);
@@ -318,10 +363,10 @@ unsigned long __stdcall BtStackTransport::btstack_thread_proc(void *param) {
 
             auto ensure_alias = [&fw_dir](const std::string &stem) {
                 if (stem.empty()) return;
-                std::string alias = fw_dir + "\\" + stem;        /* no extension */
-                std::string source = alias + ".bin";              /* shipped file */
+                std::string alias = fw_dir + "\\" + stem; /* no extension */
+                std::string source = alias + ".bin";      /* shipped file */
                 DWORD attrs = GetFileAttributesA(alias.c_str());
-                if (attrs != INVALID_FILE_ATTRIBUTES) return;     /* alias already exists */
+                if (attrs != INVALID_FILE_ATTRIBUTES) return; /* alias already exists */
                 if (GetFileAttributesA(source.c_str()) == INVALID_FILE_ATTRIBUTES) {
                     fprintf(stderr, "BTstack: WARNING firmware source missing: %s\n", source.c_str());
                     return;
@@ -359,7 +404,7 @@ unsigned long __stdcall BtStackTransport::btstack_thread_proc(void *param) {
 
     /* SSP: Just Works (no display, no keyboard) */
     gap_ssp_set_io_capability(SSP_IO_CAPABILITY_NO_INPUT_NO_OUTPUT);
-    gap_ssp_set_authentication_requirement(0);  /* No MITM required */
+    gap_ssp_set_authentication_requirement(0); /* No MITM required */
 
     gap_set_local_name("SSC On Windows");
 
@@ -412,14 +457,42 @@ unsigned long __stdcall BtStackTransport::btstack_thread_proc(void *param) {
 
     /* Power on HCI — record start time to measure firmware loading */
     self->init_start_tick_ = GetTickCount();
-    hci_power_control(HCI_POWER_ON);
+    const int power_result = hci_power_control(HCI_POWER_ON);
+    if (!self->a760_firmware_.device_path().empty()) {
+        if (power_result) {
+            self->a760_report_ += "BTstack HCI_POWER_ON failed (no USB fallback), code=" +
+                                  std::to_string(power_result) + "\n";
+            self->a760_init_failed_.store(true);
+            return 0;
+        } else {
+            self->a760_power_started_.store(true);
+        }
+    }
+
+    btstack_data_source_t media_source{};
+    self->media_waitable_timer_ = CreateWaitableTimerExW(nullptr, nullptr,
+                                                         CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                                         TIMER_MODIFY_STATE | SYNCHRONIZE);
+    if (self->media_waitable_timer_) {
+        btstack_run_loop_set_data_source_handle(&media_source, self->media_waitable_timer_);
+        btstack_run_loop_set_data_source_handler(&media_source, [](btstack_data_source_t *, btstack_data_source_callback_type_t) {
+            instance_->media_timer_pending_ = false;
+            instance_->request_media_when_due();
+        });
+        btstack_run_loop_enable_data_source_callbacks(&media_source, DATA_SOURCE_CALLBACK_READ);
+        btstack_run_loop_add_data_source(&media_source);
+    }
 
     /* Run the event loop (blocks until shutdown) */
     btstack_run_loop_execute();
+    self->reset_media_playout();
+    if (self->media_waitable_timer_) {
+        btstack_run_loop_remove_data_source(&media_source);
+        CloseHandle(self->media_waitable_timer_);
+        self->media_waitable_timer_ = nullptr;
+    }
 
-    /* Run loop has exited. Do NOT call hci_power_control/hci_close here —
-     * they need the run loop to process HCI commands and will block.
-     * Global cleanup (deinit) is handled by shutdown() after this thread exits. */
+    /* shutdown() owns the protocol and WinUSB objects after joining this thread. */
     fprintf(stderr, "BTstack: run loop exited, thread finishing\n");
     fflush(stderr);
 
@@ -442,14 +515,13 @@ void BtStackTransport::register_codec_endpoints() {
          * Byte 2: min_bitpool
          * Byte 3: max_bitpool
          */
-        static uint8_t sbc_caps[4]   = { 0x3F, 0x15, 2, 53 }; /* 44.1+48k, all ch modes, 16 blocks, 8 subbands, loudness */
-        static uint8_t sbc_config[4] = { 0x11, 0x15, 2, 53 }; /* 48k, joint stereo */
+        static uint8_t sbc_caps[4] = {0x3F, 0x15, 2, 53};   /* 44.1+48k, all ch modes, 16 blocks, 8 subbands, loudness */
+        static uint8_t sbc_config[4] = {0x11, 0x15, 2, 53}; /* 48k, joint stereo */
 
         sbc_ep_ = a2dp_source_create_stream_endpoint(
             AVDTP_AUDIO, AVDTP_CODEC_SBC,
             sbc_caps, sizeof(sbc_caps),
-            sbc_config, sizeof(sbc_config)
-        );
+            sbc_config, sizeof(sbc_config));
         if (sbc_ep_) {
             sbc_local_seid_ = avdtp_local_seid(sbc_ep_);
             fprintf(stderr, "BTstack: Registered SBC endpoint (SEID=%u)\n", sbc_local_seid_);
@@ -460,19 +532,18 @@ void BtStackTransport::register_codec_endpoints() {
     {
         /*
          * AAC capability: 6 bytes per A2DP spec
-         * Byte 0: object_type bitmap (MPEG-2 AAC-LC = 0x80)
-         * Byte 1: sampling_freq high byte (48k=0x04, 44.1k=0x08)
-         * Byte 2: sampling_freq low byte | channels high nibble (2ch=0x04)
+         * Byte 0: LC object types (MPEG-2 = 0x80, MPEG-4 = 0x40)
+         * Byte 1: high eight sampling bits (44.1 kHz = 0x01)
+         * Byte 2: low four sampling bits (48 kHz = 0x80) | channels (mono = 0x08, stereo = 0x04)
          * Byte 3-5: bit_rate (VBR flag in byte 3 bit 7)
          */
-        static uint8_t aac_caps[6]   = { 0x80, 0x0C, 0x04, 0x03, 0xE8, 0x00 }; /* AAC-LC, 44.1+48k, 2ch, 256kbps */
-        static uint8_t aac_config[6] = { 0x80, 0x04, 0x04, 0x03, 0xE8, 0x00 }; /* AAC-LC, 48k, 2ch, 256kbps */
+        static uint8_t aac_caps[6] = {0xC0, 0x01, 0x8C, 0x03, 0xE8, 0x00};   /* AAC-LC, 44.1+48k, mono/stereo, 256kbps */
+        static uint8_t aac_config[6] = {0x40, 0x00, 0x84, 0x03, 0xE8, 0x00}; /* AAC-LC, 48k, 2ch, 256kbps */
 
         aac_ep_ = a2dp_source_create_stream_endpoint(
             AVDTP_AUDIO, AVDTP_CODEC_MPEG_2_4_AAC,
             aac_caps, sizeof(aac_caps),
-            aac_config, sizeof(aac_config)
-        );
+            aac_config, sizeof(aac_config));
         if (aac_ep_) {
             aac_local_seid_ = avdtp_local_seid(aac_ep_);
             fprintf(stderr, "BTstack: Registered AAC endpoint (SEID=%u)\n", aac_local_seid_);
@@ -484,15 +555,14 @@ void BtStackTransport::register_codec_endpoints() {
         static uint8_t ssc_caps[7];
         static uint8_t ssc_config[7];
         write_vendor_codec_id(ssc_caps, SSC_VENDOR_ID, SSC_CODEC_ID);
-        ssc_caps[6] = SSC_CAP_UHQ;      /* advertise 44.1/48k + 96k */
+        ssc_caps[6] = SSC_CAP_UHQ | codec_policy::SSC_RATE_44100 | codec_policy::SSC_RATE_48000;
         write_vendor_codec_id(ssc_config, SSC_VENDOR_ID, SSC_CODEC_ID);
-        ssc_config[6] = SSC_CAP_BASIC;  /* default config: 48k-class */
+        ssc_config[6] = SSC_CAP_BASIC; /* default config: 48k-class */
 
         ssc_ep_ = a2dp_source_create_stream_endpoint(
             AVDTP_AUDIO, AVDTP_CODEC_NON_A2DP,
             ssc_caps, sizeof(ssc_caps),
-            ssc_config, sizeof(ssc_config)
-        );
+            ssc_config, sizeof(ssc_config));
         if (ssc_ep_) {
             ssc_local_seid_ = avdtp_local_seid(ssc_ep_);
             fprintf(stderr, "BTstack: Registered SSC endpoint (SEID=%u)\n", ssc_local_seid_);
@@ -507,27 +577,31 @@ void BtStackTransport::register_codec_endpoints() {
 void BtStackTransport::shutdown() {
     if (!running_.load()) return;
 
+    RunLoopRequest power_off{};
+
     /* Power off HCI properly so the USB adapter is released.
      * Without this, the next launch can't open the adapter. */
-    if (hci_ready_.load()) {
+    if (hci_ready_.load() || a760_power_started_.load()) {
         fprintf(stderr, "BTstack: powering off HCI...\n");
         fflush(stderr);
 
         /* Dispatch hci_power_control(HCI_POWER_OFF) to BTstack thread */
-        RunLoopRequest req = {};
-        req.done_event = CreateEventA(nullptr, FALSE, FALSE, nullptr);
-        req.reg.callback = [](void *ctx) {
-            auto *r = static_cast<RunLoopRequest *>(ctx);
-            hci_power_control(HCI_POWER_OFF);
-            SetEvent(r->done_event);
-        };
-        req.reg.context = &req;
-        btstack_run_loop_execute_on_main_thread(&req.reg);
-        WaitForSingleObject(req.done_event, 3000);
-        CloseHandle(req.done_event);
+        power_off.done_event = CreateEventA(nullptr, FALSE, FALSE, nullptr);
+        if (power_off.done_event) {
+            power_off.reg.callback = [](void *ctx) {
+                auto *r = static_cast<RunLoopRequest *>(ctx);
+                hci_power_control(HCI_POWER_OFF);
+                SetEvent(r->done_event);
+            };
+            power_off.reg.context = &power_off;
+            btstack_run_loop_execute_on_main_thread(&power_off.reg);
+            WaitForSingleObject(power_off.done_event, 3000);
+        }
 
-        /* Wait for HCI_STATE_OFF event (signals init_event_) */
-        WaitForSingleObject(init_event_, 5000);
+        /* The same event also signals startup, so verify state after waking. */
+        const auto timeout = GetTickCount64() + 5000;
+        while (hci_ready_.load() && GetTickCount64() < timeout)
+            WaitForSingleObject(init_event_, 100);
         fprintf(stderr, "BTstack: HCI powered off\n");
         fflush(stderr);
     }
@@ -537,15 +611,32 @@ void BtStackTransport::shutdown() {
     connected_.store(false);
     hci_ready_.store(false);
 
-    /* Request BTstack run loop to exit */
-    btstack_run_loop_trigger_exit();
+    /* Exit from a queued callback so an idle Windows run loop wakes up. */
+    btstack_context_callback_registration_t exit_request{};
+    exit_request.callback = [](void *) { btstack_run_loop_trigger_exit(); };
+    if (WaitForSingleObject(thread_handle_, 0) == WAIT_TIMEOUT)
+        btstack_run_loop_execute_on_main_thread(&exit_request);
 
     if (thread_handle_) {
-        WaitForSingleObject(thread_handle_, 10000);
+        WaitForSingleObject(thread_handle_, INFINITE);
         CloseHandle(thread_handle_);
         thread_handle_ = nullptr;
+        hci_close();
+        hci_transport_usb_instance()->close();
+        avrcp_target_deinit();
+        avrcp_controller_deinit();
+        avrcp_deinit();
+        a2dp_source_deinit();
+        sdp_deinit();
+        l2cap_deinit();
+        btstack_run_loop_deinit();
+        btstack_memory_deinit();
+        if (!hci_dump_file_.empty()) hci_dump_windows_fs_close();
+        hci_dump_init(nullptr);
     }
 
+    if (power_off.done_event) CloseHandle(power_off.done_event);
+    ssc_winusb_select_a760(nullptr, nullptr, nullptr);
     fprintf(stderr, "BTstack: shutdown complete\n");
     fflush(stderr);
 
@@ -560,13 +651,15 @@ bool BtStackTransport::scan_devices(uint8_t duration_seconds) {
     if (!hci_ready_.load()) return false;
 
     /* duration is in units of 1.28 seconds */
-    uint8_t duration_units = (uint8_t)((duration_seconds * 10 + 12) / 13);  /* convert to 1.28s units */
+    uint8_t duration_units = (uint8_t)((duration_seconds * 10 + 12) / 13); /* convert to 1.28s units */
     if (duration_units < 3) duration_units = 3;
     if (duration_units > 30) duration_units = 30;
 
     fprintf(stderr, "BTstack: Starting inquiry scan (~%u seconds)...\n",
-           (unsigned)(duration_units * 128 / 100));
+            (unsigned)(duration_units * 128 / 100));
     fflush(stderr);
+    ResetEvent(inquiry_event_);
+    ResetEvent(cancel_event_);
     discovered_devices_.clear();
     inquiry_found_count_.store(0);
     inquiry_active_.store(true);
@@ -595,7 +688,7 @@ bool BtStackTransport::scan_devices(uint8_t duration_seconds) {
     }
 
     /* Wait for inquiry to complete */
-    uint32_t timeout_ms = (duration_units * 1280) + 5000;  /* inquiry time + margin */
+    uint32_t timeout_ms = (duration_units * 1280) + 5000; /* inquiry time + margin */
     if (!wait_for_event(inquiry_event_, timeout_ms)) {
         fprintf(stderr, "BTstack: Inquiry timed out\n");
         /* Dispatch gap_inquiry_stop to BTstack thread */
@@ -632,7 +725,7 @@ bool BtStackTransport::seed_link_key(const uint8_t remote_addr[6],
     link_key_t key;
     for (int i = 0; i < 16; i++) {
         unsigned int b = 0;
-        char pair[3] = { key_hex[i * 2], key_hex[i * 2 + 1], '\0' };
+        char pair[3] = {key_hex[i * 2], key_hex[i * 2 + 1], '\0'};
         if (sscanf(pair, "%02x", &b) != 1) return false;
         key[i] = (uint8_t)b;
     }
@@ -672,7 +765,7 @@ bool BtStackTransport::get_link_key_hex(const uint8_t remote_addr[6],
 /* ======================================================================== */
 
 bool BtStackTransport::connect_a2dp(const uint8_t remote_addr[6]) {
-    if (!hci_ready_.load()) return false;
+    if (!hci_ready_.load() || !disconnect()) return false;
 
     /* BTstack uses bd_addr_t as big-endian, but our addr is little-endian (Windows BTH_ADDR) */
     bd_addr_t addr;
@@ -696,16 +789,17 @@ bool BtStackTransport::connect_a2dp(const uint8_t remote_addr[6]) {
     stream_result_.store(false);
 
     fprintf(stderr, "BTstack: Connecting to %02X:%02X:%02X:%02X:%02X:%02X...\n",
-           addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
+            addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
 
     /* Dispatch a2dp_source_establish_stream to BTstack thread */
     RunLoopRequest req = {};
     req.done_event = CreateEventA(nullptr, FALSE, FALSE, nullptr);
     memcpy(req.addr, addr, 6);
-    req.cid_out = &a2dp_cid_;
     req.reg.callback = [](void *ctx) {
         auto *r = static_cast<RunLoopRequest *>(ctx);
-        r->u8_result = a2dp_source_establish_stream(r->addr, r->cid_out);
+        uint16_t cid = 0;
+        r->u8_result = a2dp_source_establish_stream(r->addr, &cid);
+        if (r->u8_result == ERROR_CODE_SUCCESS && cid) instance_->a2dp_cid_.store(cid);
         SetEvent(r->done_event);
     };
     req.reg.context = &req;
@@ -720,14 +814,33 @@ bool BtStackTransport::connect_a2dp(const uint8_t remote_addr[6]) {
 
     /* Wait for stream establishment (includes signaling connection + SEP discovery) */
     if (!wait_for_event(connect_event_, CONNECT_TIMEOUT_MS)) {
-        fprintf(stderr, "BTstack: Connection timed out\n");
+        fprintf(stderr, "BTstack: Connection timed out or cancelled\n");
+        disconnect();
         return false;
     }
 
-    return connect_result_.load();
+    if (connect_result_.load()) return true;
+    disconnect();
+    return false;
 }
 
-bool BtStackTransport::configure_codec(AudioCodec codec, uint32_t sample_rate, uint8_t channels) {
+uint32_t BtStackTransport::compatible_capture_rate(AudioCodec codec, uint32_t preferred) const {
+    const uint32_t first = preferred == 44100 ? 44100 : 48000;
+    for (auto rate : {first, first == 44100 ? 48000u : 44100u}) {
+        if (codec == AudioCodec::AAC) {
+            for (const auto &sep : remote_caps_.aac_seps)
+                if (audio_codec_config::aac_object(sep, rate, 2) || audio_codec_config::aac_object(sep, rate, 1))
+                    return rate;
+        } else if (codec == AudioCodec::SBC) {
+            for (const auto &sep : remote_caps_.sbc_seps)
+                if (audio_codec_config::sbc_mode(sep, rate, 2) || audio_codec_config::sbc_mode(sep, rate, 1))
+                    return rate;
+        }
+    }
+    return 0;
+}
+
+bool BtStackTransport::configure_codec(AudioCodec codec, uint32_t sample_rate, uint8_t channels, EncoderQuality quality) {
     if (!connected_.load()) return false;
 
     /* Clear stale stream event from any previous attempt */
@@ -737,19 +850,41 @@ bool BtStackTransport::configure_codec(AudioCodec codec, uint32_t sample_rate, u
     selected_codec_ = codec;
     sample_rate_ = sample_rate;
     channels_ = channels;
+    quality_ = quality;
 
     /* Determine local and remote SEIDs based on codec */
     uint8_t local = 0, remote = 0;
+    uint8_t sbc_minimum = 2;
+    uint8_t aac_object = 0;
     switch (codec) {
     case AudioCodec::SBC:
         if (!remote_caps_.sbc) return false;
         local = sbc_local_seid_;
-        remote = remote_caps_.sbc_seid;
+        for (const auto &sep : remote_caps_.sbc_seps) {
+            const auto mode = audio_codec_config::sbc_mode(sep, sample_rate, channels);
+            if (!mode) continue;
+            remote = sep.seid;
+            sbc_mode_ = mode;
+            sbc_minimum = sep.minimum;
+            sbc_bitpool_ = audio_codec_config::sbc_bitpool(sep,
+                                                           quality == EncoderQuality::High ? 53 : quality == EncoderQuality::Standard ? 35
+                                                                                                                                      : 19);
+            break;
+        }
         break;
     case AudioCodec::AAC:
         if (!remote_caps_.aac) return false;
         local = aac_local_seid_;
-        remote = remote_caps_.aac_seid;
+        for (const auto &sep : remote_caps_.aac_seps) {
+            aac_object = audio_codec_config::aac_object(sep, sample_rate, channels);
+            if (!aac_object) continue;
+            remote = sep.seid;
+            aac_mpeg2_ = aac_object == 1;
+            aac_bitrate_ = audio_codec_config::aac_bitrate(sep,
+                                                           quality == EncoderQuality::High ? 256000 : quality == EncoderQuality::Standard ? 192000
+                                                                                                                                          : 128000);
+            break;
+        }
         break;
     case AudioCodec::SSC:
         if (!remote_caps_.ssc) return false;
@@ -758,7 +893,11 @@ bool BtStackTransport::configure_codec(AudioCodec codec, uint32_t sample_rate, u
         break;
     }
 
-    if (local == 0 || remote == 0) return false;
+    if (local == 0 || remote == 0) {
+        log_negotiation("BTstack: no compatible SEP codec=%u rate=%u channels=%u\n",
+                        static_cast<unsigned>(codec), sample_rate, static_cast<unsigned>(channels));
+        return false;
+    }
     local_seid_ = local;
     remote_seid_ = remote;
 
@@ -769,18 +908,12 @@ bool BtStackTransport::configure_codec(AudioCodec codec, uint32_t sample_rate, u
     switch (codec) {
     case AudioCodec::SSC: {
         write_vendor_codec_id(config_info, SSC_VENDOR_ID, SSC_CODEC_ID);
-        /* capability byte: advertise both basic & 96k so the source
-         * selects matching config. Freq isn't in SSC codec info beyond
-         * this; the bitrate is chosen by the encoder instance. */
-        config_info[6] = (sample_rate == 88200 || sample_rate == 96000)
-                             ? SSC_CAP_UHQ : SSC_CAP_BASIC;
+        config_info[6] = codec_policy::ssc_configuration(remote_caps_.ssc_cap, sample_rate);
+        fprintf(stderr, "BTstack: SSC SET_CONFIGURATION: SEID=%u remote cap=0x%02X rate=%u config=0x%02X\n",
+                static_cast<unsigned>(remote), static_cast<unsigned>(remote_caps_.ssc_cap), sample_rate,
+                static_cast<unsigned>(config_info[6]));
+        if (config_info[6] == 0) return false;
         config_len = 7;
-        if ((sample_rate == 88200 || sample_rate == 96000) && !remote_caps_.ssc_uhq) {
-            fprintf(stderr,
-                    "BTstack: WARNING — UHQ requested but remote SSC cap=0x%02X "
-                    "has no UHQ(0x02) bit; remote may not decode 96 kHz\n",
-                    remote_caps_.ssc_cap);
-        }
         break;
     }
     case AudioCodec::SBC:
@@ -804,20 +937,24 @@ bool BtStackTransport::configure_codec(AudioCodec codec, uint32_t sample_rate, u
     if (codec == AudioCodec::SBC) {
         memset(&req.sbc_config, 0, sizeof(req.sbc_config));
         req.sbc_config.sampling_frequency = static_cast<uint16_t>(sample_rate);
-        req.sbc_config.channel_mode = (channels == 1) ? AVDTP_CHANNEL_MODE_MONO : AVDTP_CHANNEL_MODE_JOINT_STEREO;
+        req.sbc_config.channel_mode = static_cast<avdtp_channel_mode_t>(sbc_mode_);
         req.sbc_config.block_length = AVDTP_SBC_BLOCK_LENGTH_16;
         req.sbc_config.subbands = AVDTP_SBC_SUBBANDS_8;
         req.sbc_config.allocation_method = AVDTP_SBC_ALLOCATION_METHOD_LOUDNESS;
-        req.sbc_config.min_bitpool_value = 2;
-        req.sbc_config.max_bitpool_value = 53;
+        req.sbc_config.min_bitpool_value = sbc_minimum;
+        req.sbc_config.max_bitpool_value = sbc_bitpool_;
+        log_negotiation("AVDTP SBC local=%u remote=%u rate=%u mode=%u blocks=16 subbands=8 loudness bitpool=%u..%u\n",
+                        local, remote, sample_rate, sbc_mode_, sbc_minimum, sbc_bitpool_);
     } else if (codec == AudioCodec::AAC) {
         memset(&req.aac_config, 0, sizeof(req.aac_config));
-        req.aac_config.object_type = AVDTP_AAC_MPEG2_LC;
+        req.aac_config.object_type = aac_mpeg2_ ? AVDTP_AAC_MPEG2_LC : AVDTP_AAC_MPEG4_LC;
         req.aac_config.sampling_frequency = sample_rate;
         req.aac_config.channels = channels;
-        req.aac_config.bit_rate = 256000;
+        req.aac_config.bit_rate = aac_bitrate_;
         req.aac_config.vbr = 0;
         req.aac_config.drc = false;
+        log_negotiation("AVDTP AAC local=%u remote=%u object=%u rate=%u channels=%u bitrate=%u VBR=0\n",
+                        local, remote, aac_object, sample_rate, channels, aac_bitrate_);
     }
 
     req.reg.callback = [](void *ctx) {
@@ -848,13 +985,13 @@ bool BtStackTransport::configure_codec(AudioCodec codec, uint32_t sample_rate, u
 
     uint8_t status = req.u8_result;
     if (status != ERROR_CODE_SUCCESS) {
-        fprintf(stderr, "BTstack: set_config_other failed (0x%02x)\n", status);
+        log_negotiation("AVDTP SET_CONFIGURATION dispatch failed (0x%02X) local=%u remote=%u\n", status, local, remote);
         return false;
     }
 
     /* Wait for stream established event */
     if (!wait_for_event(stream_event_, STREAM_TIMEOUT_MS)) {
-        fprintf(stderr, "BTstack: Stream configuration timed out\n");
+        log_negotiation("BTstack: Stream configuration timed out\n");
         return false;
     }
 
@@ -864,12 +1001,12 @@ bool BtStackTransport::configure_codec(AudioCodec codec, uint32_t sample_rate, u
 bool BtStackTransport::disconnect() {
     if (a2dp_cid_ == 0) return true;
 
-    if (streaming_.load()) {
-        stop_stream();
-    }
+    streaming_.store(false);
 
     /* Dispatch a2dp_source_disconnect to BTstack thread */
+    ResetEvent(static_cast<HANDLE>(disconnect_event_));
     uint16_t cid = a2dp_cid_;
+    if (!cid) return true;
     RunLoopRequest req = {};
     req.done_event = CreateEventA(nullptr, FALSE, FALSE, nullptr);
     req.config_a2dp_cid = cid;
@@ -883,12 +1020,8 @@ bool BtStackTransport::disconnect() {
     WaitForSingleObject(req.done_event, 5000);
     CloseHandle(req.done_event);
 
-    wait_for_event(disconnect_event_, DISCONNECT_TIMEOUT_MS);
-
-    connected_.store(false);
-    streaming_.store(false);
-    a2dp_cid_ = 0;
-    return true;
+    return a2dp_cid_.load() == 0 ||
+           WaitForSingleObject(disconnect_event_, DISCONNECT_TIMEOUT_MS) == WAIT_OBJECT_0;
 }
 
 bool BtStackTransport::check_disconnected() {
@@ -905,64 +1038,12 @@ bool BtStackTransport::reconnect() {
         return false;
     }
 
-    /* Ensure previous connection state is fully cleared */
-    connected_.store(false);
-    streaming_.store(false);
-    media_queue_count_.store(0);
-    media_queue_head_ = 0;
-    media_queue_tail_ = 0;
-    a2dp_cid_ = 0;
-    local_seid_ = 0;
-    remote_seid_ = 0;
-    media_mtu_ = 0;
-
-    /* Reset remote capabilities for re-discovery */
-    remote_caps_ = {};
-    disconnect_occurred_.store(false);
-
-    /* Reset sync event flags */
-    ResetEvent(static_cast<HANDLE>(cancel_event_));
-    connect_result_.store(false);
-    stream_result_.store(false);
-    start_result_.store(false);
-
-    fprintf(stderr, "BTstack: Reconnecting to %02X:%02X:%02X:%02X:%02X:%02X...\n",
-           remote_addr_be_[0], remote_addr_be_[1], remote_addr_be_[2],
-           remote_addr_be_[3], remote_addr_be_[4], remote_addr_be_[5]);
-
-    /* Dispatch a2dp_source_establish_stream to BTstack thread */
-    RunLoopRequest req = {};
-    req.done_event = CreateEventA(nullptr, FALSE, FALSE, nullptr);
-    memcpy(req.addr, remote_addr_be_, 6);
-    req.cid_out = &a2dp_cid_;
-    req.reg.callback = [](void *ctx) {
-        auto *r = static_cast<RunLoopRequest *>(ctx);
-        r->u8_result = a2dp_source_establish_stream(r->addr, r->cid_out);
-        SetEvent(r->done_event);
-    };
-    req.reg.context = &req;
-    btstack_run_loop_execute_on_main_thread(&req.reg);
-    WaitForSingleObject(req.done_event, 5000);
-    CloseHandle(req.done_event);
-
-    if (req.u8_result != ERROR_CODE_SUCCESS) {
-        fprintf(stderr, "BTstack: reconnect establish_stream failed (0x%02x)\n", req.u8_result);
-        return false;
-    }
-
-    /* Wait for connection + capability discovery */
-    if (!wait_for_event(connect_event_, CONNECT_TIMEOUT_MS)) {
-        fprintf(stderr, "BTstack: Reconnection timed out\n");
-        return false;
-    }
-
-    if (!connect_result_.load()) {
-        fprintf(stderr, "BTstack: Reconnection failed\n");
-        return false;
-    }
+    uint8_t address[6];
+    std::reverse_copy(remote_addr_be_, remote_addr_be_ + sizeof(remote_addr_be_), address);
+    if (!connect_a2dp(address)) return false;
 
     /* Re-configure codec with same settings */
-    if (!configure_codec(selected_codec_, sample_rate_, channels_)) {
+    if (!configure_codec(selected_codec_, sample_rate_, channels_, quality_)) {
         fprintf(stderr, "BTstack: Reconnect codec config failed\n");
         disconnect();
         return false;
@@ -1040,9 +1121,67 @@ bool BtStackTransport::stop_stream() {
     return true;
 }
 
+void BtStackTransport::reset_media_playout() {
+    if (media_timer_pending_) {
+        if (media_waitable_timer_) CancelWaitableTimer(media_waitable_timer_);
+        btstack_run_loop_remove_timer(static_cast<btstack_timer_source_t *>(media_timer_));
+        media_timer_pending_ = false;
+    }
+    media_can_send_pending_ = false;
+    media_clock_ = {};
+    playout_stalls_.store(0);
+    std::lock_guard<std::mutex> lock(send_mutex_);
+    media_queue_count_.store(0);
+    media_queue_head_ = media_queue_tail_ = 0;
+}
+
+void BtStackTransport::request_media_when_due() {
+    if (!streaming_.load() || !a2dp_cid_ || !sample_rate_ ||
+        media_timer_pending_ || media_can_send_pending_) return;
+    uint32_t timestamp = 0;
+    {
+        std::lock_guard<std::mutex> lock(send_mutex_);
+        if (!media_queue_count_.load()) return;
+        timestamp = media_queue_[media_queue_tail_].timestamp;
+    }
+    static const auto frequency = [] {
+        LARGE_INTEGER value{};
+        QueryPerformanceFrequency(&value);
+        return value.QuadPart;
+    }();
+    LARGE_INTEGER counter{};
+    QueryPerformanceCounter(&counter);
+    const uint64_t now = counter.QuadPart * 1000 / frequency;
+    const auto due = media_clock_.due(timestamp, sample_rate_, now, playout_buffer_ms_);
+    playout_stalls_.store(media_clock_.stalls());
+    if (due > now) {
+        if (media_waitable_timer_) {
+            LARGE_INTEGER interval{};
+            interval.QuadPart = -static_cast<int64_t>(due - now) * 10000;
+            if (SetWaitableTimer(media_waitable_timer_, &interval, 0, nullptr, nullptr, FALSE)) {
+                media_timer_pending_ = true;
+                return;
+            }
+        }
+        auto *timer = static_cast<btstack_timer_source_t *>(media_timer_);
+        btstack_run_loop_set_timer_context(timer, this);
+        btstack_run_loop_set_timer_handler(timer, [](btstack_timer_source_t *source) {
+            auto *self = static_cast<BtStackTransport *>(btstack_run_loop_get_timer_context(source));
+            self->media_timer_pending_ = false;
+            self->request_media_when_due();
+        });
+        btstack_run_loop_set_timer(timer, static_cast<uint32_t>(due - now));
+        media_timer_pending_ = true;
+        btstack_run_loop_add_timer(timer);
+        return;
+    }
+    media_can_send_pending_ = true;
+    a2dp_source_stream_endpoint_request_can_send_now(a2dp_cid_, local_seid_);
+}
+
 bool BtStackTransport::send_media(const uint8_t *data, uint32_t size,
-                                   uint32_t timestamp, uint8_t frames,
-                                   AudioCodec codec) {
+                                  uint32_t timestamp, uint8_t frames,
+                                  AudioCodec codec) {
     if (!streaming_.load()) return false;
 
     /* Enqueue under lock — keep critical section minimal so the BTstack
@@ -1050,38 +1189,36 @@ bool BtStackTransport::send_media(const uint8_t *data, uint32_t size,
     {
         std::lock_guard<std::mutex> lock(send_mutex_);
 
-        /* Drop if queue is full */
-        if (media_queue_count_.load() >= MEDIA_QUEUE_CAPACITY) {
+        if (!streaming_.load()) return false;
+        const auto buffer_size = static_cast<uint32_t>(sizeof(MediaPacket::data));
+        const auto mtu = static_cast<uint32_t>(get_media_mtu());
+        const auto limit = std::min(buffer_size, mtu ? mtu : 679u);
+        const bool aac = codec == AudioCodec::AAC;
+        const bool sbc = codec == AudioCodec::SBC;
+        const auto count = aac ? audio_codec_config::aac_fragment_count(size, limit) : 1u;
+        if (size == 0 || !count ||
+            count > static_cast<uint32_t>(MEDIA_QUEUE_CAPACITY - media_queue_count_.load()) ||
+            (aac && frames != 1) ||
+            (sbc && (frames < 1 || frames > 15)) ||
+            (!aac && size > limit - static_cast<uint32_t>(sbc))) {
             send_failure_count_.fetch_add(1);
             return false;
         }
 
-        MediaPacket &slot = media_queue_[media_queue_head_];
-
-        /* Build the media payload */
-        if (codec == AudioCodec::SBC) {
-            if (size + 1 > sizeof(slot.data)) {
-                send_failure_count_.fetch_add(1);
-                return false;
-            }
-            /* SBC media payload header: 1 byte, frame count in lower 4 bits, no fragmentation */
-            slot.data[0] = frames & 0x0F;
-            memcpy(slot.data + 1, data, size);
-            slot.size = size + 1;
-        } else {
-            /* AAC and SSC: raw payload, no additional header */
-            if (size > sizeof(slot.data)) {
-                send_failure_count_.fetch_add(1);
-                return false;
-            }
-            memcpy(slot.data, data, size);
-            slot.size = size;
+        // A LATM access unit may span multiple RTP packets with the same
+        // timestamp. Reserve space for all fragments before enqueueing any.
+        for (uint32_t fragment = 0; fragment < count; ++fragment) {
+            MediaPacket &slot = media_queue_[media_queue_head_];
+            const auto offset = aac ? fragment * limit : 0u;
+            const auto bytes = std::min(limit, size - offset);
+            if (sbc) slot.data[0] = frames;
+            memcpy(slot.data + static_cast<unsigned>(sbc), data + offset, bytes);
+            slot.size = bytes + static_cast<unsigned>(sbc);
+            slot.timestamp = timestamp;
+            slot.marker = aac && fragment + 1 == count;
+            media_queue_head_ = (media_queue_head_ + 1) % MEDIA_QUEUE_CAPACITY;
         }
-
-        slot.timestamp = timestamp;
-        slot.frames = frames;
-        media_queue_head_ = (media_queue_head_ + 1) % MEDIA_QUEUE_CAPACITY;
-        media_queue_count_.fetch_add(1);
+        media_queue_count_.fetch_add(static_cast<int>(count));
     }
     /* --- send_mutex released --- */
 
@@ -1092,10 +1229,7 @@ bool BtStackTransport::send_media(const uint8_t *data, uint32_t size,
         reg->callback = [](void *ctx) {
             auto *self = static_cast<BtStackTransport *>(ctx);
             self->media_trigger_pending_.store(false);
-            if (self->streaming_.load() && self->a2dp_cid_ != 0) {
-                a2dp_source_stream_endpoint_request_can_send_now(
-                    self->a2dp_cid_, self->local_seid_);
-            }
+            self->request_media_when_due();
         };
         reg->context = this;
         btstack_run_loop_execute_on_main_thread(reg);
@@ -1136,32 +1270,63 @@ AudioCodec BtStackTransport::get_selected_codec() const {
 /* ======================================================================== */
 
 void BtStackTransport::packet_handler_trampoline(uint8_t packet_type, uint16_t channel,
-                                                  uint8_t *packet, uint16_t size) {
+                                                 uint8_t *packet, uint16_t size) {
     if (instance_) {
         instance_->handle_packet(packet_type, channel, packet, size);
     }
 }
 
 void BtStackTransport::handle_packet(uint8_t packet_type, uint16_t channel,
-                                      uint8_t *packet, uint16_t size) {
+                                     uint8_t *packet, uint16_t size) {
     (void)channel;
     (void)size;
 
     if (packet_type == HCI_EVENT_PACKET) {
         uint8_t event_type = hci_event_packet_get_type(packet);
 
+        if (!a760_firmware_.device_path().empty() && !init_result_.load() && !a760_init_failed_.load() &&
+            event_type == HCI_EVENT_COMMAND_COMPLETE && size >= 5 &&
+            little_endian_read_16(packet, 3) == 0x1001) {
+            a760_post_reset_verified_ = size == 14 && packet[5] == 0 &&
+                                        packet[6] == 0x0a && packet[9] == 0x0a &&
+                                        little_endian_read_16(packet, 10) == 0x005d &&
+                                        little_endian_read_16(packet, 7) == (a760::patch_version >> 16) &&
+                                        little_endian_read_16(packet, 12) == (a760::patch_version & 0xffff);
+            char trace[192];
+            if (size == 14) {
+                snprintf(trace, sizeof(trace),
+                         "BTstack HCI 0x1001 after reset: status=0x%02X HCI=0x%02X rev=0x%04X LMP=0x%02X subver=0x%04X manufacturer=0x%04X\n",
+                         static_cast<unsigned>(packet[5]), static_cast<unsigned>(packet[6]),
+                         static_cast<unsigned>(little_endian_read_16(packet, 7)),
+                         static_cast<unsigned>(packet[9]), static_cast<unsigned>(little_endian_read_16(packet, 12)),
+                         static_cast<unsigned>(little_endian_read_16(packet, 10)));
+            } else {
+                snprintf(trace, sizeof(trace), "BTstack HCI 0x1001 after reset: unexpected length %u\n",
+                         static_cast<unsigned>(size));
+            }
+            a760_report_ += trace;
+            if (!a760_post_reset_verified_) a760_init_failed_.store(true);
+        }
+
         switch (event_type) {
         case BTSTACK_EVENT_STATE: {
             uint8_t state = btstack_event_state_get_state(packet);
             if (state == HCI_STATE_WORKING) {
+                if (!a760_firmware_.device_path().empty() && !a760_post_reset_verified_) {
+                    a760_report_ += "ABORT: BTstack did not confirm patched HCI version after reset\n";
+                    a760_init_failed_.store(true);
+                    break;
+                }
+                if (!a760_firmware_.device_path().empty() && !init_result_.load())
+                    a760_report_ += "BTstack HCI_STATE_WORKING; discovery available\n";
                 uint32_t elapsed = GetTickCount() - init_start_tick_;
                 fprintf(stderr, "BTstack: HCI ready (took %lu ms)\n", (unsigned long)elapsed);
                 if (elapsed < 500) {
                     fprintf(stderr, "BTstack: WARNING — HCI init < 500ms, "
-                            "Realtek firmware likely NOT loaded\n");
+                                    "Realtek firmware likely NOT loaded\n");
                 } else {
                     fprintf(stderr, "BTstack: Firmware loading appears successful "
-                            "(>500ms init time)\n");
+                                    "(>500ms init time)\n");
                 }
                 fflush(stderr);
                 hci_ready_.store(true);
@@ -1183,7 +1348,7 @@ void BtStackTransport::handle_packet(uint8_t packet_type, uint16_t channel,
                 bd_addr_t addr;
                 hci_event_user_confirmation_request_get_bd_addr(packet, addr);
                 fprintf(stderr, "BTstack: Auto-accepting pairing with %02X:%02X:%02X:%02X:%02X:%02X\n",
-                       addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
+                        addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
                 gap_ssp_confirmation_response(addr);
             }
             break;
@@ -1203,13 +1368,13 @@ void BtStackTransport::handle_packet(uint8_t packet_type, uint16_t channel,
             hci_event_connection_complete_get_bd_addr(packet, addr);
             if (status != 0) {
                 fprintf(stderr, "BTstack: HCI connection to %02X:%02X:%02X:%02X:%02X:%02X "
-                        "FAILED: 0x%02X (%s)\n",
+                                "FAILED: 0x%02X (%s)\n",
                         addr[0], addr[1], addr[2], addr[3], addr[4], addr[5],
                         status, hci_error_string(status));
             } else {
                 fprintf(stderr, "BTstack: HCI ACL connection established to "
-                       "%02X:%02X:%02X:%02X:%02X:%02X\n",
-                       addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
+                                "%02X:%02X:%02X:%02X:%02X:%02X\n",
+                        addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
             }
             break;
         }
@@ -1226,9 +1391,9 @@ void BtStackTransport::handle_packet(uint8_t packet_type, uint16_t channel,
                 name = (const char *)gap_event_inquiry_result_get_name(packet);
             }
             fprintf(stderr, "BTstack: Inquiry result: %02X:%02X:%02X:%02X:%02X:%02X "
-                   "CoD=0x%06X RSSI=%d name=%.*s\n",
-                   addr[0], addr[1], addr[2], addr[3], addr[4], addr[5],
-                   cod, rssi, name_len, name);
+                            "CoD=0x%06X RSSI=%d name=%.*s\n",
+                    addr[0], addr[1], addr[2], addr[3], addr[4], addr[5],
+                    cod, rssi, name_len, name);
             fflush(stderr);
             if (inquiry_active_.load()) {
                 inquiry_found_count_.fetch_add(1);
@@ -1237,14 +1402,20 @@ void BtStackTransport::handle_packet(uint8_t packet_type, uint16_t channel,
                 dev.name = std::string(name, name_len);
                 dev.cod = cod;
                 dev.rssi = rssi;
-                discovered_devices_.push_back(dev);
+                const auto existing = std::find_if(discovered_devices_.begin(), discovered_devices_.end(), [&](const DiscoveredDevice &item) {
+                    return memcmp(item.address, dev.address, sizeof(dev.address)) == 0;
+                });
+                if (existing == discovered_devices_.end())
+                    discovered_devices_.push_back(std::move(dev));
+                else if (!dev.name.empty())
+                    existing->name = std::move(dev.name);
             }
             break;
         }
 
         case GAP_EVENT_INQUIRY_COMPLETE:
             fprintf(stderr, "BTstack: Inquiry complete (%u devices found)\n",
-                   inquiry_found_count_.load());
+                    inquiry_found_count_.load());
             fflush(stderr);
             inquiry_active_.store(false);
             signal_event(inquiry_event_, true);
@@ -1254,7 +1425,7 @@ void BtStackTransport::handle_packet(uint8_t packet_type, uint16_t channel,
             uint8_t reason = hci_event_disconnection_complete_get_reason(packet);
             uint16_t handle = hci_event_disconnection_complete_get_connection_handle(packet);
             fprintf(stderr, "BTstack: HCI disconnection (handle=0x%04x, reason=0x%02x: %s)\n",
-                   handle, reason, hci_error_string(reason));
+                    handle, reason, hci_error_string(reason));
             /* Mark connection as lost — main loop will handle reconnect */
             if (connected_.load() || streaming_.load()) {
                 streaming_.store(false);
@@ -1290,11 +1461,12 @@ void BtStackTransport::handle_a2dp_event(uint8_t *packet, uint16_t size) {
         uint8_t status = a2dp_subevent_signaling_connection_established_get_status(packet);
         a2dp_cid_ = a2dp_subevent_signaling_connection_established_get_a2dp_cid(packet);
         if (status != ERROR_CODE_SUCCESS) {
+            a2dp_cid_.store(0);
             fprintf(stderr, "BTstack: Signaling connection failed (0x%02x)\n", status);
             connect_result_.store(false);
             signal_event(connect_event_, false);
         } else {
-            fprintf(stderr, "BTstack: Signaling connection established (cid=0x%04x)\n", a2dp_cid_);
+            fprintf(stderr, "BTstack: Signaling connection established (cid=0x%04x)\n", a2dp_cid_.load());
             /* Don't signal yet — wait for capability discovery to complete */
         }
         break;
@@ -1334,25 +1506,40 @@ void BtStackTransport::handle_a2dp_event(uint8_t *packet, uint16_t size) {
     case A2DP_SUBEVENT_SIGNALING_MEDIA_CODEC_SBC_CAPABILITY: {
         uint8_t remote_seid =
             a2dp_subevent_signaling_media_codec_sbc_capability_get_remote_seid(packet);
+        const audio_codec_config::SbcCaps cap{remote_seid,
+                                              a2dp_subevent_signaling_media_codec_sbc_capability_get_sampling_frequency_bitmap(packet),
+                                              a2dp_subevent_signaling_media_codec_sbc_capability_get_channel_mode_bitmap(packet),
+                                              a2dp_subevent_signaling_media_codec_sbc_capability_get_block_length_bitmap(packet),
+                                              a2dp_subevent_signaling_media_codec_sbc_capability_get_subbands_bitmap(packet),
+                                              a2dp_subevent_signaling_media_codec_sbc_capability_get_allocation_method_bitmap(packet),
+                                              a2dp_subevent_signaling_media_codec_sbc_capability_get_min_bitpool_value(packet),
+                                              a2dp_subevent_signaling_media_codec_sbc_capability_get_max_bitpool_value(packet)};
         remote_caps_.sbc = true;
-        remote_caps_.sbc_seid = remote_seid;
-        fprintf(stderr, "BTstack: Remote supports SBC (SEID=%u)\n", remote_seid);
+        remote_caps_.sbc_seps.push_back(cap);
+        log_negotiation("AVDTP SBC capability SEID=%u rates=0x%02X modes=0x%02X blocks=0x%02X subbands=0x%02X allocation=0x%02X pool=%u..%u\n",
+                        cap.seid, cap.rates, cap.channels, cap.blocks, cap.subbands, cap.allocation, cap.minimum, cap.maximum);
         break;
     }
 
     case A2DP_SUBEVENT_SIGNALING_MEDIA_CODEC_MPEG_AAC_CAPABILITY: {
         uint8_t remote_seid =
             a2dp_subevent_signaling_media_codec_mpeg_aac_capability_get_remote_seid(packet);
+        const audio_codec_config::AacCaps cap{remote_seid,
+                                              a2dp_subevent_signaling_media_codec_mpeg_aac_capability_get_object_type_bitmap(packet),
+                                              a2dp_subevent_signaling_media_codec_mpeg_aac_capability_get_channels_bitmap(packet),
+                                              a2dp_subevent_signaling_media_codec_mpeg_aac_capability_get_sampling_frequency_bitmap(packet),
+                                              a2dp_subevent_signaling_media_codec_mpeg_aac_capability_get_bit_rate(packet)};
         remote_caps_.aac = true;
-        remote_caps_.aac_seid = remote_seid;
-        fprintf(stderr, "BTstack: Remote supports AAC (SEID=%u)\n", remote_seid);
+        remote_caps_.aac_seps.push_back(cap);
+        log_negotiation("AVDTP AAC capability SEID=%u object=0x%02X rates=0x%03X channels=0x%02X bitrate=%u\n",
+                        cap.seid, cap.object, cap.rates, cap.channels, cap.bitrate);
         break;
     }
 
     case A2DP_SUBEVENT_SIGNALING_CAPABILITIES_COMPLETE: {
         /* All SEP capabilities have been discovered */
         fprintf(stderr, "BTstack: Capability discovery complete (SBC=%d, AAC=%d, SSC=%d)\n",
-               remote_caps_.sbc, remote_caps_.aac, remote_caps_.ssc);
+                remote_caps_.sbc, remote_caps_.aac, remote_caps_.ssc);
         connected_.store(true);
         connect_result_.store(true);
         signal_event(connect_event_, true);
@@ -1399,7 +1586,7 @@ void BtStackTransport::handle_a2dp_event(uint8_t *packet, uint16_t size) {
     case A2DP_SUBEVENT_STREAM_ESTABLISHED: {
         uint8_t status = a2dp_subevent_stream_established_get_status(packet);
         if (status != ERROR_CODE_SUCCESS) {
-            fprintf(stderr, "BTstack: Stream establishment failed (0x%02x)\n", status);
+            log_negotiation("BTstack: Stream establishment failed (0x%02x)\n", status);
             stream_result_.store(false);
         } else {
             local_seid_ = a2dp_subevent_stream_established_get_local_seid(packet);
@@ -1407,8 +1594,8 @@ void BtStackTransport::handle_a2dp_event(uint8_t *packet, uint16_t size) {
             /* Cache media MTU on the BTstack thread (safe to call here) */
             int max = a2dp_max_media_payload_size(a2dp_cid_, local_seid_);
             media_mtu_ = (max > 0) ? (uint16_t)max : 679;
-            fprintf(stderr, "BTstack: Stream established (local=%u, remote=%u, mtu=%u)\n",
-                   local_seid_, remote_seid_, media_mtu_);
+            log_negotiation("BTstack: Stream established (local=%u, remote=%u, mtu=%u)\n",
+                            local_seid_, remote_seid_, media_mtu_);
             stream_result_.store(true);
         }
         signal_event(stream_event_, stream_result_.load());
@@ -1416,17 +1603,19 @@ void BtStackTransport::handle_a2dp_event(uint8_t *packet, uint16_t size) {
     }
 
     case A2DP_SUBEVENT_STREAM_STARTED: {
+        reset_media_playout();
         fprintf(stderr, "BTstack: Streaming started\n");
         streaming_.store(true);
         start_result_.store(true);
         signal_event(start_event_, true);
 
-        /* Request first can-send-now to kick off media sending */
-        a2dp_source_stream_endpoint_request_can_send_now(a2dp_cid_, local_seid_);
+        // The producer schedules the first packet after the configured pre-roll.
         break;
     }
 
     case A2DP_SUBEVENT_STREAMING_CAN_SEND_MEDIA_PACKET_NOW:
+        media_can_send_pending_ = false;
+        if (!streaming_.load() || !a2dp_cid_) break;
         /* Dequeue one media packet, then send it OUTSIDE the lock
          * so send_mutex isn't held during the L2CAP write (which can
          * block the WASAPI thread trying to enqueue in send_media). */
@@ -1451,7 +1640,7 @@ void BtStackTransport::handle_a2dp_event(uint8_t *packet, uint16_t size) {
                 int max_payload = a2dp_max_media_payload_size(a2dp_cid_, local_seid_);
                 if (max_payload > 0 && pkt.size <= (uint32_t)max_payload) {
                     uint8_t status = a2dp_source_stream_send_media_payload_rtp(
-                        a2dp_cid_, local_seid_, 0 /* marker */,
+                        a2dp_cid_, local_seid_, static_cast<uint8_t>(pkt.marker),
                         pkt.timestamp,
                         pkt.data, (uint16_t)pkt.size);
                     if (status != ERROR_CODE_SUCCESS) {
@@ -1471,29 +1660,33 @@ void BtStackTransport::handle_a2dp_event(uint8_t *packet, uint16_t size) {
                 cstyle::fprint(stderr, cstyle::Tag::Data, "BTstack: ");
                 fprintf(stderr, "CTX can_send=%u ok=%u err=",
                         diag_can_send, diag_tx_ok);
-                if (diag_tx_err > 0) cstyle::fprint(stderr, cstyle::Tag::Error, "%u", diag_tx_err);
-                else fprintf(stderr, "%u", diag_tx_err);
+                if (diag_tx_err > 0)
+                    cstyle::fprint(stderr, cstyle::Tag::Error, "%u", diag_tx_err);
+                else
+                    fprintf(stderr, "%u", diag_tx_err);
                 fprintf(stderr, " q=%u\n", media_queue_count_.load());
             }
             /* Chain next CAN_SEND_NOW if queue still has data.
              * If empty, send_media() will trigger when new data arrives. */
-            if (media_queue_count_.load() > 0) {
-                a2dp_source_stream_endpoint_request_can_send_now(a2dp_cid_, local_seid_);
-            }
+            request_media_when_due();
         }
         break;
 
     case A2DP_SUBEVENT_STREAM_SUSPENDED:
+        reset_media_playout();
         fprintf(stderr, "BTstack: Stream suspended\n");
         streaming_.store(false);
         break;
 
     case A2DP_SUBEVENT_STREAM_RELEASED:
+        reset_media_playout();
         fprintf(stderr, "BTstack: Stream released\n");
         streaming_.store(false);
         break;
 
     case A2DP_SUBEVENT_SIGNALING_CONNECTION_RELEASED:
+        if (a2dp_subevent_signaling_connection_released_get_a2dp_cid(packet) != a2dp_cid_.load()) break;
+        reset_media_playout();
         fprintf(stderr, "BTstack: Signaling connection released\n");
         connected_.store(false);
         streaming_.store(false);
@@ -1507,9 +1700,23 @@ void BtStackTransport::handle_a2dp_event(uint8_t *packet, uint16_t size) {
         signal_event(disconnect_event_, true);
         break;
 
-    case A2DP_SUBEVENT_COMMAND_REJECTED:
-        fprintf(stderr, "BTstack: A2DP command rejected\n");
+    case A2DP_SUBEVENT_COMMAND_REJECTED: {
+        const auto cid = a2dp_subevent_command_rejected_get_a2dp_cid(packet);
+        const auto seid = a2dp_subevent_command_rejected_get_local_seid(packet);
+        const auto signal = a2dp_subevent_command_rejected_get_signal_identifier(packet);
+        log_negotiation("AVDTP reject CID=%u local SEID=%u signal=0x%02X initiator=%u\n",
+                        cid, seid, signal, a2dp_subevent_command_rejected_get_is_initiator(packet));
+        if (cid == a2dp_cid_ && (seid == 0 || seid == local_seid_)) {
+            if (signal == AVDTP_SI_SET_CONFIGURATION || signal == AVDTP_SI_OPEN) {
+                stream_result_.store(false);
+                SetEvent(stream_event_);
+            } else if (signal == AVDTP_SI_START) {
+                start_result_.store(false);
+                SetEvent(start_event_);
+            }
+        }
         break;
+    }
 
     default:
         break;
@@ -1533,7 +1740,7 @@ void BtStackTransport::handle_avrcp_event(uint8_t *packet, uint16_t size) {
 
         /* Subscribe to volume change notifications */
         avrcp_controller_enable_notification(avrcp_cid_,
-            AVRCP_NOTIFICATION_EVENT_VOLUME_CHANGED);
+                                             AVRCP_NOTIFICATION_EVENT_VOLUME_CHANGED);
         break;
     }
 
@@ -1553,7 +1760,7 @@ void BtStackTransport::handle_avrcp_event(uint8_t *packet, uint16_t size) {
 
         /* Re-register notification (AVRCP spec requires re-subscribing after each) */
         avrcp_controller_enable_notification(avrcp_cid_,
-            AVRCP_NOTIFICATION_EVENT_VOLUME_CHANGED);
+                                             AVRCP_NOTIFICATION_EVENT_VOLUME_CHANGED);
         break;
     }
 
@@ -1578,7 +1785,7 @@ bool BtStackTransport::set_absolute_volume(uint8_t volume) {
     struct VolumeRequest {
         btstack_context_callback_registration_t reg;
         uint16_t cid;
-        uint8_t  volume;
+        uint8_t volume;
     };
     auto *req = new VolumeRequest();
     req->cid = avrcp_cid_;
@@ -1608,15 +1815,29 @@ void BtStackTransport::signal_event(void *event_handle, bool success) {
     SetEvent(static_cast<HANDLE>(event_handle));
 }
 
+void BtStackTransport::log_negotiation(const char *format, ...) {
+    char line[512];
+    va_list args;
+    va_start(args, format);
+    std::vsnprintf(line, sizeof(line), format, args);
+    va_end(args);
+    fputs(line, stderr);
+    std::lock_guard<std::mutex> lock(negotiation_mutex_);
+    negotiation_log_ += line;
+}
+
+std::string BtStackTransport::negotiation_log() {
+    std::lock_guard<std::mutex> lock(negotiation_mutex_);
+    return negotiation_log_;
+}
+
 bool BtStackTransport::wait_for_event(void *event_handle, uint32_t timeout_ms) {
     DWORD before = GetTickCount();
-    HANDLE handles[2] = { static_cast<HANDLE>(event_handle), static_cast<HANDLE>(cancel_event_) };
+    HANDLE handles[2] = {static_cast<HANDLE>(event_handle), static_cast<HANDLE>(cancel_event_)};
     DWORD result = WaitForMultipleObjects(2, handles, FALSE, timeout_ms);
     DWORD elapsed = GetTickCount() - before;
     fprintf(stderr, "BTstack: wait_for_event handle=%p result=%lu elapsed=%lu ms\n",
             event_handle, result, elapsed);
     fflush(stderr);
-    return (result == WAIT_OBJECT_0);  /* only first handle = success */
+    return (result == WAIT_OBJECT_0); /* only first handle = success */
 }
-
-

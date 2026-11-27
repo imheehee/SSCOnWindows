@@ -13,13 +13,11 @@
 
 using json = nlohmann::json;
 
-std::string AppSettings::get_settings_path() const
-{
+std::string AppSettings::get_settings_path() const {
     return get_config_dir() + "\\settings.json";
 }
 
-void AppSettings::load()
-{
+void AppSettings::load() {
     std::ifstream ifs(get_settings_path());
     if (!ifs.is_open())
         return;
@@ -33,17 +31,21 @@ void AppSettings::load()
 
     /* General */
     language = j.value("language", language);
-    theme    = j.value("theme", theme);
+    theme = j.value("theme", theme);
 
     /* Startup */
     start_with_windows = j.value("start_with_windows", start_with_windows);
-    start_minimized    = j.value("start_minimized", start_minimized);
-    minimize_to_tray   = j.value("minimize_to_tray", minimize_to_tray);
+    start_minimized = j.value("start_minimized", start_minimized);
+    minimize_to_tray = j.value("minimize_to_tray", minimize_to_tray);
     auto_connect_on_start = j.value("auto_connect_on_start", auto_connect_on_start);
 
     /* Appearance */
-    mica_enabled  = j.value("mica_enabled", mica_enabled);
+    mica_enabled = j.value("mica_enabled", mica_enabled);
     reduce_motion = j.value("reduce_motion", reduce_motion);
+
+    ssc_native = j.value("ssc_native", ssc_native);
+    audio_buffer_ms = j.value("audio_buffer_ms", audio_buffer_ms);
+    a760_auto_init = j.value("a760_auto_init", a760_auto_init);
 
     /* Debug */
     debug_mode = j.value("debug_mode", debug_mode);
@@ -53,30 +55,33 @@ void AppSettings::load()
     bt_chip_fw_stem = j.value("bt_chip_fw_stem", bt_chip_fw_stem);
 
     /* Window state */
-    last_profile  = j.value("last_profile", last_profile);
+    last_profile = j.value("last_profile", last_profile);
 
     /* Last device */
-    last_device_mac   = j.value("last_device_mac", last_device_mac);
-    last_device_name  = j.value("last_device_name", last_device_name);
+    last_device_mac = j.value("last_device_mac", last_device_mac);
+    last_device_name = j.value("last_device_name", last_device_name);
 }
 
-void AppSettings::save() const
-{
+void AppSettings::save() const {
     json j;
 
     /* General */
     j["language"] = language;
-    j["theme"]    = theme;
+    j["theme"] = theme;
 
     /* Startup */
     j["start_with_windows"] = start_with_windows;
-    j["start_minimized"]    = start_minimized;
-    j["minimize_to_tray"]   = minimize_to_tray;
+    j["start_minimized"] = start_minimized;
+    j["minimize_to_tray"] = minimize_to_tray;
     j["auto_connect_on_start"] = auto_connect_on_start;
 
     /* Appearance */
-    j["mica_enabled"]  = mica_enabled;
+    j["mica_enabled"] = mica_enabled;
     j["reduce_motion"] = reduce_motion;
+
+    j["ssc_native"] = ssc_native;
+    j["audio_buffer_ms"] = audio_buffer_ms;
+    j["a760_auto_init"] = a760_auto_init;
 
     /* Debug */
     j["debug_mode"] = debug_mode;
@@ -86,11 +91,11 @@ void AppSettings::save() const
     j["bt_chip_fw_stem"] = bt_chip_fw_stem;
 
     /* Window state */
-    j["last_profile"]  = last_profile;
+    j["last_profile"] = last_profile;
 
     /* Last device */
-    j["last_device_mac"]   = last_device_mac;
-    j["last_device_name"]  = last_device_name;
+    j["last_device_mac"] = last_device_mac;
+    j["last_device_name"] = last_device_name;
 
     std::ofstream ofs(get_settings_path());
     if (ofs.is_open())
