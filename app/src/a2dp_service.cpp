@@ -19,6 +19,7 @@
 #include "ssc_encoder.h"
 #include "codec_policy.h"
 #include "bt_device.h"
+#include <iterator>
 #include "localization.h"
 #include "resampler.h"
 
@@ -973,7 +974,10 @@ void A2dpService::scan_thread_func_inner() {
 
     transport_->scan_devices(8);
 
-    auto &results = transport_->get_discovered_devices();
+    const auto &results = transport_->get_discovered_devices();
+    std::vector<BtDevice> remembered;
+    if (std::any_of(results.begin(), results.end(), [](const auto &device) { return device.name.empty(); }))
+        remembered = BtDeviceDiscovery::scan_paired_devices();
     {
         std::lock_guard<std::mutex> lock(device_mutex_);
         device_list_.erase(
@@ -999,6 +1003,12 @@ void A2dpService::scan_thread_func_inner() {
                 DeviceEntry sd{};
                 memcpy(sd.address, d.address, 6);
                 sd.name = d.name;
+                if (sd.name.empty()) {
+                    const auto known = std::find_if(remembered.begin(), remembered.end(), [&](const BtDevice &device) {
+                        return std::equal(device.address, device.address + 6, std::reverse_iterator(d.address + 6));
+                    });
+                    if (known != remembered.end()) sd.name = known->name;
+                }
                 sd.addr_str = buf;
                 sd.audio_device = (((d.cod >> 8) & 0x1F) == 0x04);
                 sd.saved = false;
@@ -1455,7 +1465,7 @@ void A2dpService::streaming_thread_func_inner() {
                 }
             }
         }
-        save_device(p.device_address.c_str(), dev_name);
+        save_device(p.device_address.c_str(), dev_name.empty() ? p.device_name : dev_name);
     }
 
     /* Start audio pipeline */

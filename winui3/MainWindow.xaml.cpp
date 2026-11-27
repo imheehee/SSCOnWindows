@@ -677,7 +677,7 @@ namespace winrt::A2DPWBWinUI::implementation
         auto macHstring = MacAddressBox().Text();
         std::string mac = WToA(macHstring);
         if (mac.empty() || mac.size() < 17) {
-            AppendLog(LogTag::Error, "Invalid MAC address.");
+            AppendLog(LogTag::Error, UiText("Invalid MAC address.", "MAC 주소가 올바르지 않습니다."));
             return;
         }
 
@@ -685,7 +685,7 @@ namespace winrt::A2DPWBWinUI::implementation
         unsigned int a[6];
         if (sscanf_s(mac.c_str(), "%02x:%02x:%02x:%02x:%02x:%02x",
                      &a[0], &a[1], &a[2], &a[3], &a[4], &a[5]) != 6) {
-            AppendLog(LogTag::Error, "Invalid MAC format. Use XX:XX:XX:XX:XX:XX");
+            AppendLog(LogTag::Error, UiText("Invalid MAC format. Use XX:XX:XX:XX:XX:XX.", "MAC 주소는 XX:XX:XX:XX:XX:XX 형식으로 입력하세요."));
             return;
         }
 
@@ -710,7 +710,7 @@ namespace winrt::A2DPWBWinUI::implementation
         profile.ssc_native = settings_.ssc_native;
         profile.audio_buffer_ms = settings_.audio_buffer_ms;
 
-        AppendLog("Direct connect to " + mac + " [" + profile.codec + "]...");
+        AppendLog(std::string(UiText("Direct connect to ", "직접 연결 ")) + mac + " [" + profile.codec + "]");
         RememberLastDevice(profile.device_address, profile.device_name);
 
         if (service_->start_streaming(profile)) {

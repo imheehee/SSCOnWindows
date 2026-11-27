@@ -513,12 +513,12 @@ void BtStackTransport::register_codec_endpoints() {
     {
         /*
          * AAC capability: 6 bytes per A2DP spec
-         * Byte 0: object_type bitmap (MPEG-2 AAC-LC = 0x80)
-         * Byte 1: sampling_freq high byte (48k=0x04, 44.1k=0x08)
-         * Byte 2: sampling_freq low byte | channels high nibble (2ch=0x04)
+         * Byte 0: LC object types (MPEG-2 = 0x80, MPEG-4 = 0x40)
+         * Byte 1: high eight sampling bits (44.1 kHz = 0x01)
+         * Byte 2: low four sampling bits (48 kHz = 0x80) | channels (mono = 0x08, stereo = 0x04)
          * Byte 3-5: bit_rate (VBR flag in byte 3 bit 7)
          */
-        static uint8_t aac_caps[6] = {0xC0, 0x01, 0x8C, 0x03, 0xE8, 0x00};   /* AAC-LC, 44.1+48k, 2ch, 256kbps */
+        static uint8_t aac_caps[6] = {0xC0, 0x01, 0x8C, 0x03, 0xE8, 0x00};   /* AAC-LC, 44.1+48k, mono/stereo, 256kbps */
         static uint8_t aac_config[6] = {0x40, 0x00, 0x84, 0x03, 0xE8, 0x00}; /* AAC-LC, 48k, 2ch, 256kbps */
 
         aac_ep_ = a2dp_source_create_stream_endpoint(
@@ -622,6 +622,8 @@ bool BtStackTransport::scan_devices(uint8_t duration_seconds) {
     fprintf(stderr, "BTstack: Starting inquiry scan (~%u seconds)...\n",
             (unsigned)(duration_units * 128 / 100));
     fflush(stderr);
+    ResetEvent(inquiry_event_);
+    ResetEvent(cancel_event_);
     discovered_devices_.clear();
     inquiry_found_count_.store(0);
     inquiry_active_.store(true);
@@ -856,8 +858,8 @@ bool BtStackTransport::configure_codec(AudioCodec codec, uint32_t sample_rate, u
     }
 
     if (local == 0 || remote == 0) {
-        fprintf(stderr, "BTstack: no compatible SEP codec=%u rate=%u channels=%u\n",
-                static_cast<unsigned>(codec), sample_rate, static_cast<unsigned>(channels));
+        log_negotiation("BTstack: no compatible SEP codec=%u rate=%u channels=%u\n",
+                        static_cast<unsigned>(codec), sample_rate, static_cast<unsigned>(channels));
         return false;
     }
     local_seid_ = local;
@@ -947,7 +949,7 @@ bool BtStackTransport::configure_codec(AudioCodec codec, uint32_t sample_rate, u
 
     uint8_t status = req.u8_result;
     if (status != ERROR_CODE_SUCCESS) {
-        fprintf(stderr, "BTstack: set_config_other failed (0x%02x)\n", status);
+        log_negotiation("AVDTP SET_CONFIGURATION dispatch failed (0x%02X) local=%u remote=%u\n", status, local, remote);
         return false;
     }
 
@@ -1352,7 +1354,13 @@ void BtStackTransport::handle_packet(uint8_t packet_type, uint16_t channel,
                 dev.name = std::string(name, name_len);
                 dev.cod = cod;
                 dev.rssi = rssi;
-                discovered_devices_.push_back(dev);
+                const auto existing = std::find_if(discovered_devices_.begin(), discovered_devices_.end(), [&](const DiscoveredDevice &item) {
+                    return memcmp(item.address, dev.address, sizeof(dev.address)) == 0;
+                });
+                if (existing == discovered_devices_.end())
+                    discovered_devices_.push_back(std::move(dev));
+                else if (!dev.name.empty())
+                    existing->name = std::move(dev.name);
             }
             break;
         }
@@ -1530,7 +1538,7 @@ void BtStackTransport::handle_a2dp_event(uint8_t *packet, uint16_t size) {
     case A2DP_SUBEVENT_STREAM_ESTABLISHED: {
         uint8_t status = a2dp_subevent_stream_established_get_status(packet);
         if (status != ERROR_CODE_SUCCESS) {
-            fprintf(stderr, "BTstack: Stream establishment failed (0x%02x)\n", status);
+            log_negotiation("BTstack: Stream establishment failed (0x%02x)\n", status);
             stream_result_.store(false);
         } else {
             local_seid_ = a2dp_subevent_stream_established_get_local_seid(packet);
@@ -1538,8 +1546,8 @@ void BtStackTransport::handle_a2dp_event(uint8_t *packet, uint16_t size) {
             /* Cache media MTU on the BTstack thread (safe to call here) */
             int max = a2dp_max_media_payload_size(a2dp_cid_, local_seid_);
             media_mtu_ = (max > 0) ? (uint16_t)max : 679;
-            fprintf(stderr, "BTstack: Stream established (local=%u, remote=%u, mtu=%u)\n",
-                    local_seid_, remote_seid_, media_mtu_);
+            log_negotiation("BTstack: Stream established (local=%u, remote=%u, mtu=%u)\n",
+                            local_seid_, remote_seid_, media_mtu_);
             stream_result_.store(true);
         }
         signal_event(stream_event_, stream_result_.load());

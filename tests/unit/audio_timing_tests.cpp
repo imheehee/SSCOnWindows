@@ -50,8 +50,8 @@ TEST_CASE("Upsampling is invariant across capture callback boundaries") {
 
 TEST_CASE("AAC and SBC capabilities are matched on a single audio SEP") {
     using namespace audio_codec_config;
-    const AacCaps aac48{2, 0x40, 0x04, 0x008, 160000};
-    const AacCaps aac44{3, 0x80, 0x08, 0x010, 0};
+    const AacCaps aac48{2, 0x20, 0x04, 0x008, 160000};
+    const AacCaps aac44{3, 0x40, 0x08, 0x010, 0};
     CHECK(aac_object(aac48, 48000, 2) == 2);
     CHECK(aac_object(aac48, 44100, 2) == 0);
     CHECK(aac_object(aac44, 44100, 2) == 0);
