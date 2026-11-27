@@ -122,4 +122,4 @@ A760에는 기존 코드의 HCI 식별과 ROM 조회 프로토콜을 적용했�
 
 SM-R190용 SSC 기본 협상은 헤드셋이 광고한 44.1/48 kHz 비트를 사용한다. 44.1 kHz 기본 설정은 `0x28`, 48 kHz legacy 설정은 `0x18`이며, 기존 HiFi 가능 헤드셋의 48 kHz 설정 `0x0C`는 유지한다. legacy 모드는 최대 192 kbps로 제한한다. 캡처를 협상한 주파수로 초기화해 인코더와 동일한 PCM 속도를 사용한다. SM-R190의 실제 capability와 재생은 검증 대기다. [SSC 모드와 A2DP 설정값](https://github.com/WillyBilly06/samsung-ssc-encoder#operating-modes)
 
-Buds4 Pro의 HiFi/UHQ는 원격 vendor codec ID, SEP별 capability, 실제 SET_CONFIGURATION 응답, PCM·인코더 경로와 가청 재생을 검증한 후 별도 지원 대상으로 판정한다. 기존 SSC UHQ 경로는 장치가 광고한 기능으로 제한하며 제품명에 따른 강제 활성화는 사용하지 않는다.
+삼성은 Buds4 Pro의 SSC UHQ를 최대 24비트/96 kHz로 안내한다. 이 앱에서 Buds4 Pro의 HiFi/UHQ는 원격 vendor codec ID, SEP별 capability, 실제 SET_CONFIGURATION 응답, PCM·인코더 경로와 가청 재생을 검증한 후 별도 지원 대상으로 판정한다. 기존 SSC UHQ 경로는 장치가 광고한 기능으로 제한하며 제품명에 따른 강제 활성화는 사용하지 않는다. [Samsung Buds4 Pro 제품 사양](https://www.samsung.com/us/audio-sound/galaxy-buds4-pro/)

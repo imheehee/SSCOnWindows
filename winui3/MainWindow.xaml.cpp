@@ -650,7 +650,7 @@ namespace winrt::A2DPWBWinUI::implementation
 
     void MainWindow::OnPageSizeChanged(IInspectable const&, SizeChangedEventArgs const& args)
     {
-        if (!DevicesPanel() || !SettingsPanel() || !DevicesColumn()) return;
+        if (!DevicesPanel() || !SettingsPanel() || !DevicesColumn() || !StatusDevicePanel()) return;
         const bool narrow = args.NewSize().Width < 760;
         DevicesColumn().Width(narrow ? GridLength{0, GridUnitType::Auto}
                                       : GridLength{300, GridUnitType::Pixel});
@@ -658,6 +658,9 @@ namespace winrt::A2DPWBWinUI::implementation
         Grid::SetColumn(SettingsPanel(), narrow ? 0 : 1);
         Grid::SetColumnSpan(SettingsPanel(), narrow ? 2 : 1);
         Grid::SetRow(SettingsPanel(), narrow ? 1 : 0);
+        Grid::SetColumn(StatusDevicePanel(), narrow ? 1 : 2);
+        Grid::SetRow(StatusDevicePanel(), narrow ? 1 : 0);
+        StatusDevicePanel().HorizontalAlignment(narrow ? HorizontalAlignment::Left : HorizontalAlignment::Right);
     }
 
     uint32_t MainWindow::SelectedSampleRate() const

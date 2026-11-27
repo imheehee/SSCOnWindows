@@ -29,6 +29,11 @@
     -->
     <ScrollViewer x:Name="PageScroller" VerticalScrollBarVisibility="Auto"
                   HorizontalScrollBarVisibility="Disabled" SizeChanged="OnPageSizeChanged">
+    <ScrollViewer.Resources>
+        <DataTemplate x:Key="WrappedButtonCaption">
+            <TextBlock Text="{Binding}" TextWrapping="Wrap" TextAlignment="Center" />
+        </DataTemplate>
+    </ScrollViewer.Resources>
     <Grid Padding="16" RowSpacing="8">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -46,18 +51,18 @@
                            Text="v0.2.0 &#183; by Salvetum" />
             </StackPanel>
 
-            <VariableSizedWrapGrid Orientation="Horizontal" ItemWidth="158" ItemHeight="38">
-                <Button x:Uid="ScanButton" x:Name="ScanButton" Content="Scan Devices" Style="{StaticResource AppButtonStyle}" Click="OnScanClick"
+            <VariableSizedWrapGrid Orientation="Horizontal" ItemWidth="158" ItemHeight="54">
+                <Button x:Uid="ScanButton" x:Name="ScanButton" Content="Scan Devices" Style="{StaticResource AppButtonStyle}" ContentTemplate="{StaticResource WrappedButtonCaption}" Click="OnScanClick"
                         ToolTipService.ToolTip="Rescan for nearby Bluetooth audio devices (~8 s)" />
-                <Button x:Uid="ConnectButton" x:Name="ConnectButton" Content="Connect" IsEnabled="False" Style="{StaticResource AppButtonStyle}" Click="OnConnectClick"
+                <Button x:Uid="ConnectButton" x:Name="ConnectButton" Content="Connect" IsEnabled="False" Style="{StaticResource AppButtonStyle}" ContentTemplate="{StaticResource WrappedButtonCaption}" Click="OnConnectClick"
                         ToolTipService.ToolTip="Connect to the device selected in the list" />
-                <Button x:Uid="DirectConnectButton" x:Name="DirectConnectButton" Content="Direct Connect" Style="{StaticResource AppButtonStyle}" Click="OnDirectConnectClick"
+                <Button x:Uid="DirectConnectButton" x:Name="DirectConnectButton" Content="Direct Connect" Style="{StaticResource AppButtonStyle}" ContentTemplate="{StaticResource WrappedButtonCaption}" Click="OnDirectConnectClick"
                         ToolTipService.ToolTip="Connect straight to a known Bluetooth address" />
-                <Button x:Uid="ReconnectLastButton" x:Name="ReconnectLastButton" Content="Reconnect Last" IsEnabled="False" Style="{StaticResource AppButtonStyle}" Click="OnReconnectLastClick"
+                <Button x:Uid="ReconnectLastButton" x:Name="ReconnectLastButton" Content="Reconnect Last" IsEnabled="False" Style="{StaticResource AppButtonStyle}" ContentTemplate="{StaticResource WrappedButtonCaption}" Click="OnReconnectLastClick"
                         ToolTipService.ToolTip="Reconnect to the device used most recently" />
-                <Button x:Uid="ClearButton" x:Name="ClearButton" Content="Clear Log" Style="{StaticResource AppButtonStyle}" Click="OnClearLogClick"
+                <Button x:Uid="ClearButton" x:Name="ClearButton" Content="Clear Log" Style="{StaticResource AppButtonStyle}" ContentTemplate="{StaticResource WrappedButtonCaption}" Click="OnClearLogClick"
                         ToolTipService.ToolTip="Empty the activity log" />
-                <Button x:Uid="SetupButton" x:Name="SetupButton" Content="Setup &amp; Help" Style="{StaticResource AppButtonStyle}" Click="OnSetupClick"
+                <Button x:Uid="SetupButton" x:Name="SetupButton" Content="Setup &amp; Help" Style="{StaticResource AppButtonStyle}" ContentTemplate="{StaticResource WrappedButtonCaption}" Click="OnSetupClick"
                         ToolTipService.ToolTip="First-time pairing steps and troubleshooting FAQ" />
             </VariableSizedWrapGrid>
         </StackPanel>
@@ -69,13 +74,17 @@
                 BorderBrush="{ThemeResource SystemControlForegroundBaseMediumBrush}"
                 BorderThickness="1"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-            <Grid ColumnSpacing="16">
+            <Grid ColumnSpacing="12" RowSpacing="8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
                 <FontIcon x:Uid="StatusGlyph" x:Name="StatusGlyph" Grid.Column="0"
                           FontFamily="Segoe Fluent Icons" FontSize="30"
                           VerticalAlignment="Center" HorizontalAlignment="Center"
@@ -92,10 +101,10 @@
                                TextWrapping="Wrap" Visibility="Collapsed" />
                 </StackPanel>
 
-                <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="16,0,0,0">
+                <StackPanel x:Name="StatusDevicePanel" Grid.Column="2" VerticalAlignment="Center" MaxWidth="220">
                     <TextBlock x:Uid="Device" Text="Device" Style="{StaticResource CaptionGrayTextStyle}"
                                HorizontalAlignment="Right" />
-                    <TextBlock x:Name="StatusDeviceText" Text="&#8212;" FontWeight="SemiBold"
+                    <TextBlock x:Name="StatusDeviceText" Text="&#8212;" FontWeight="SemiBold" TextWrapping="Wrap"
                                HorizontalAlignment="Right" />
                     <TextBlock x:Name="StatusDeviceMacText" Style="{StaticResource CaptionGrayTextStyle}"
                                HorizontalAlignment="Right"
@@ -188,24 +197,15 @@
                             Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                         <StackPanel Spacing="8">
                             <TextBlock x:Uid="LiveStatistics" Text="Live statistics" Style="{StaticResource SectionLabelTextStyle}" />
-                            <Grid ColumnSpacing="8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-                                <TextBlock x:Uid="StreamHealthText" x:Name="StreamHealthText" Grid.Column="0"
-                                           Text="No data yet" FontWeight="SemiBold"
-                                           VerticalAlignment="Center" />
-                                <TextBlock x:Name="StatsFreshnessText" Grid.Column="1"
-                                           Style="{StaticResource HintGrayTextStyle}"
-                                           HorizontalAlignment="Right" VerticalAlignment="Center"
-                                           TextTrimming="CharacterEllipsis" />
-                            </Grid>
-                            <StackPanel Orientation="Horizontal" Spacing="16">
+                            <TextBlock x:Uid="StreamHealthText" x:Name="StreamHealthText"
+                                       Text="No data yet" FontWeight="SemiBold" TextWrapping="Wrap" />
+                            <TextBlock x:Name="StatsFreshnessText" Style="{StaticResource HintGrayTextStyle}"
+                                       TextWrapping="Wrap" />
+                            <VariableSizedWrapGrid Orientation="Horizontal" ItemWidth="154" ItemHeight="24">
                                 <TextBlock x:Uid="LatencyText" x:Name="LatencyText" Text="Latency: &#8212;" Style="{StaticResource StatsValueTextStyle}" />
                                 <TextBlock x:Uid="ErrorRateText" x:Name="ErrorRateText" Text="Error rate: &#8212;" Style="{StaticResource StatsValueTextStyle}" />
                                 <TextBlock x:Uid="LossRateText" x:Name="LossRateText" Text="Loss rate: &#8212;" Style="{StaticResource StatsValueTextStyle}" />
-                            </StackPanel>
+                            </VariableSizedWrapGrid>
                             <TextBlock x:Uid="QueueText" x:Name="QueueText" Text="Queue: &#8212;" Style="{StaticResource CaptionGrayTextStyle}"
                                        Typography.NumeralAlignment="Tabular" />
                             <Border Height="56" Padding="4"
@@ -284,8 +284,7 @@
                                                VerticalAlignment="Center" />
                                 </StackPanel>
                                 <Slider x:Uid="BitrateSlider" x:Name="BitrateSlider" Minimum="0" Maximum="990"
-                                        StepFrequency="1" Value="0" Width="340"
-                                        HorizontalAlignment="Left"
+                                        StepFrequency="1" Value="0" HorizontalAlignment="Stretch"
                                         ToolTipService.ToolTip="Target bitrate. 0 picks the best value the active codec mode allows."
                                         ValueChanged="OnBitrateChanged" />
                             </StackPanel>
@@ -298,8 +297,7 @@
                                                Typography.NumeralAlignment="Tabular" />
                                 </StackPanel>
                                 <Slider x:Uid="VolumeSlider" x:Name="VolumeSlider" Minimum="0" Maximum="100"
-                                        StepFrequency="1" Value="100" Width="340"
-                                        HorizontalAlignment="Left"
+                                        StepFrequency="1" Value="100" HorizontalAlignment="Stretch"
                                         ToolTipService.ToolTip="Device volume (AVRCP absolute volume)"
                                         ValueChanged="OnVolumeChanged" />
                             </StackPanel>
