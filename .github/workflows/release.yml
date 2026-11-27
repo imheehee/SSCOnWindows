@@ -59,11 +59,19 @@ jobs:
           $redistVersion = (Get-Content "$vs\VC\Auxiliary\Build\Microsoft.VCRedistVersion.default.txt" -Raw).Trim()
           $crt = @(Get-ChildItem "$vs\VC\Redist\MSVC\$redistVersion\x64\Microsoft.VC*.CRT\*.dll" -File)
           if (!$crt.Count) { throw 'Visual C++ x64 app-local CRT DLLs are missing.' }
-          foreach ($dir in "$dist\wx", "$dist\winui", "$dist\docs\ko") {
+          foreach ($dir in "$dist\wx", "$dist\winui") {
             $crt | Copy-Item -Destination $dir -Force
           }
-          foreach ($file in 'SSCOnWindows.exe', 'Microsoft.UI.Xaml.dll', 'resources.pri') {
+          foreach ($file in 'SSCOnWindows.exe', 'Microsoft.UI.Xaml.dll', 'SSCOnWindows.pri', 'App.xbf', 'MainWindow.xbf') {
             if (!(Test-Path "$dist\winui\$file" -PathType Leaf)) { throw "Missing WinUI payload: $file" }
+          }
+          $makepri = "${env:ProgramFiles(x86)}\Windows Kits\10\bin\10.0.26100.0\x64\makepri.exe"
+          $priDump = Join-Path $env:RUNNER_TEMP 'ssc-pri.xml'
+          & $makepri Dump -IndexFile "$dist\winui\SSCOnWindows.pri" -OutputFile $priDump -Verbose -Overwrite
+          if ($LASTEXITCODE -ne 0 -or
+              !(Select-String -Path $priDump -SimpleMatch 'A760DiagnosticsButton' -Quiet) -or
+              !(Select-String -Path $priDump -SimpleMatch 'ko-KR' -Quiet)) {
+            throw 'The WinUI PRI is missing the app resources or Korean language qualifier.'
           }
           Get-ChildItem "$dist\winui" -Recurse -File -Include *.pdb,*.lib,*.exp |
             Remove-Item -Force
