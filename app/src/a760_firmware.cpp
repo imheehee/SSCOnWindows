@@ -121,6 +121,6 @@ A760Firmware A760Firmware::prepare(const std::filesystem::path &directory, std::
     report += "Realtech epatch | project=14 | ROM=1 required | chip=2 | config records=0\n";
     report += "RAM payload: 30210 bytes, expected HCI firmware 0xDFC6D922\n";
     if (!verify_a760_rom(result.device_path_, report))
-        throw std::runtime_error("A760 cold HCI identity or ROM check failed");
+        throw std::runtime_error("A760 cold HCI identity, ROM or security-project check failed");
     return result;
 }

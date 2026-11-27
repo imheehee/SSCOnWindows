@@ -16,9 +16,9 @@
 ## ipTIME A760 실험용 RAM 초기화
 
 1. Windows 11 장치 관리자에서 이미 WinUSB로 연결된 `USB\VID_0BDA&PID_A760&REV_0200` 한 대를 확인합니다. 기존 장치 검색·스트리밍을 끝내고 다른 SSCOnWindows 인스턴스를 종료하세요. 동글을 물리적으로 뺐다가 다시 연결하면 콜드 상태에서 시험할 수 있습니다.
-2. WinUI에서 **문제 해결 → A760 펌웨어 다운로드 및 검증**을 누릅니다. 공식 linux-firmware의 고정 커밋에서 두 파일을 HTTPS로 가져와 크기·SHA-256·epatch·config를 검사하고, 연결된 장치의 HCI와 ROM 버전을 확인합니다. 네트워크에서 가져오기 어렵다면 [공식 원본 커밋](https://gitlab.com/kernel-firmware/linux-firmware/-/tree/a2dcb924f0897368b0b4f305cbf9808cdda90ce0/rtl_bt)에서 받은 `rtl8761bu_fw.bin`과 `rtl8761bu_config.bin`을 한 폴더에 두고 **로컬 A760 펌웨어 검증**을 누르세요.
-3. 검증을 통과하면 **실험용 RAM 초기화 시작 → RAM 로드 승인**을 누릅니다. 앱은 전용 USB 핸들을 열고 `REV_0200`, 패치 전 HCI 식별값, ROM `0x01`을 다시 확인한 후 Project 14 / Chip ID 2 패치를 RAM에만 보냅니다. 블록의 오류·누락 또는 버전 불일치에서 즉시 중단하며 자동 재시도나 다른 장치로의 전환을 하지 않습니다.
-4. 초기화 성공 조건은 마지막 블록 후의 HCI 펌웨어 버전 `0xDFC6D922`, BTstack의 HCI Reset 이후 동일한 버전, 그리고 `HCI_STATE_WORKING`입니다. **A760 로그 저장**으로 두 SHA-256, 전후 HCI/LMP, ROM 상태, 120개 블록의 인덱스·응답과 앱 단계 기록을 텍스트로 보관합니다. 실패하면 로그를 보관하고 앱을 닫은 후 동글을 뺐다가 다시 연결하세요.
+2. WinUI에서 **문제 해결 → A760 펌웨어 다운로드 및 검증**을 누릅니다. 공식 linux-firmware의 고정 커밋에서 두 파일을 HTTPS로 가져와 크기·SHA-256·epatch·config를 검사하고, 연결된 장치의 HCI, ROM 버전, Realtek 보안 프로젝트 키 ID를 확인합니다. 네트워크에서 가져오기 어렵다면 [공식 원본 커밋](https://gitlab.com/kernel-firmware/linux-firmware/-/tree/a2dcb924f0897368b0b4f305cbf9808cdda90ce0/rtl_bt)에서 받은 `rtl8761bu_fw.bin`과 `rtl8761bu_config.bin`을 한 폴더에 두고 **로컬 A760 펌웨어 검증**을 누르세요.
+3. 검증을 통과하면 **실험용 RAM 초기화 시작 → RAM 로드 승인**을 누릅니다. 앱은 전용 USB 핸들을 열고 `REV_0200`, 패치 전 HCI 식별값, ROM `0x01`, 키 ID `0`을 다시 확인한 후 Project 14 / Chip ID 2 패치를 RAM에만 보냅니다. 블록의 오류·누락 또는 버전 불일치에서 즉시 중단하며 자동 재시도나 다른 장치로의 전환을 하지 않습니다.
+4. 초기화 성공 조건은 마지막 블록 후의 HCI 펌웨어 버전 `0xDFC6D922`, BTstack의 HCI Reset 이후 동일한 버전, 그리고 `HCI_STATE_WORKING`입니다. **A760 로그 저장**으로 두 SHA-256, 전후 HCI/LMP, ROM·키 ID 상태, 120개 블록의 인덱스·응답과 앱 단계 기록을 텍스트로 보관합니다. 실패하면 로그를 보관하고 앱을 닫은 후 동글을 뺐다가 다시 연결하세요.
 5. **장치 검색**을 누르고 페어링 모드의 Galaxy Buds Pro **SM-R190**을 선택하세요. 코덱 **SSC**, 주파수 **48 kHz**로 연결해 소리가 나는지 확인합니다. 연결을 끊은 뒤 **44.1 kHz**로 다시 시험하고, 앱에 표시된 실제 스트림·캡처 주파수와 코덱을 기록하세요. 헤드셋이 한 주파수만 광고하면 그 주파수로 협상합니다.
 6. 실험 종료는 스트리밍을 끊고 앱을 닫은 다음 USB 전원을 끊습니다. 실험 선택과 링크 키는 세션 중에만 사용합니다. Qualcomm FastConnect 7800, Alternative A2DP Driver와 Secure Boot는 그대로 두세요.
 

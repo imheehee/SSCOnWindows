@@ -116,7 +116,7 @@ Keep the device address private (use `AA:BB:…:FF` or a short prefix).
 
 [Debian 원본 패키지](https://deb.debian.org/debian/pool/non-free-firmware/f/firmware-nonfree/firmware-realtek_20261019-1_all.deb) · [OEM 이미지와 Linux 비교 실측](https://iptime.com/support/qna/898555)
 
-A760 실험 모드의 허용 파일은 공식 linux-firmware `a2dcb924f0897368b0b4f305cbf9808cdda90ce0`의 두 파일이다. 원본 다운로드의 크기와 해시가 위 Debian 파일과 동일함을 오프라인으로 확인했다. Windows 앱은 HTTPS 또는 로컬 입력 모두 고정 SHA-256과 정확한 크기를 검사한다. OEM 파일은 이 실험 경로의 대상이 아니다. [공식 linux-firmware 커밋](https://gitlab.com/kernel-firmware/linux-firmware/-/tree/a2dcb924f0897368b0b4f305cbf9808cdda90ce0/rtl_bt)
+A760 실험 모드의 허용 파일은 공식 linux-firmware `a2dcb924f0897368b0b4f305cbf9808cdda90ce0`의 두 파일이다. 원본 다운로드의 크기와 해시가 위 Debian 파일과 동일함을 오프라인으로 확인했다. Windows 앱은 HTTPS 또는 로컬 입력 모두 고정 SHA-256과 정확한 크기를 검사한다. Linux와 같이 읽기 전용 `0xFC61`로 보안 프로젝트 레지스터를 읽고, 키 ID가 0일 때만 legacy config를 허용한다. OEM 파일은 이 실험 경로의 대상이 아니다. [공식 linux-firmware 커밋](https://gitlab.com/kernel-firmware/linux-firmware/-/tree/a2dcb924f0897368b0b4f305cbf9808cdda90ce0/rtl_bt)
 
 Linux `btrtl`은 USB와 ROM의 HCI/LMP 조합으로 RTL8761BU를 선택한다. ROM+1이 Chip ID를 결정하고, 선택한 epatch 끝 4바이트를 컨테이너 버전으로 교체한 후 config를 이어 붙인다. 승인된 Windows 실험 세션은 동일한 30,210바이트를 `0xFC20`의 252바이트 블록으로 한 개씩 보내며 마지막 블록에 종료 비트를 설정한다. 상태·길이·블록 응답과 패치 후 HCI/LMP를 확인하고, 같은 USB 핸들로 BTstack 초기화를 이어 간다. 초기화 중 HCI Reset 뒤의 버전까지 일치해야 검색이 준비된다. 검증은 현재 Linux 소스 및 오프라인 바이트 수준이며, Windows에서 실제 패치 전송·리셋·검색·오디오 재생은 실물 시험 대상이다. [Linux btrtl 초기화 구현](https://github.com/torvalds/linux/blob/master/drivers/bluetooth/btrtl.c)
 

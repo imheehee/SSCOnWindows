@@ -156,6 +156,25 @@ std::string describe_version(const HciReply &version, bool korean) {
     return details;
 }
 
+// btrtl includes the legacy config only when the Realtek security-project key ID is zero.
+bool verify_security_project(HANDLE device, WINUSB_INTERFACE_HANDLE usb, uint8_t pipe,
+                             HANDLE event, std::string &report) {
+    constexpr std::array<uint8_t, 5> security_project_register{0x10, 0xa4, 0xad, 0x00, 0xb0};
+    const auto response = read_hci(0xfc61, device, usb, pipe, event,
+                                   security_project_register.data(), security_project_register.size());
+    if (response.result != HciReply::Result::Complete || response.size != 8 || response.bytes[5]) {
+        report += hci_failure(0xfc61, response, false) + "\n";
+        return false;
+    }
+    char details[112];
+    snprintf(details, sizeof(details), "HCI 0xFC61 status=0x00 SEC_PROJ=0x%04X key_id=%u\n",
+             le16(response.bytes.data() + 6), static_cast<unsigned>(response.bytes[6]));
+    report += details;
+    if (response.bytes[6] == 0) return true;
+    report += "ABORT: this RAM experiment requires Realtek key ID 0 for the pinned legacy config\n";
+    return false;
+}
+
 } // namespace
 
 static std::string diagnose_a760_impl(bool korean, const std::string *expected_path, bool *rom_ok) {
@@ -244,7 +263,10 @@ static std::string diagnose_a760_impl(bool korean, const std::string *expected_p
     else
         report += tr(" | ROM differs from the published A760 measurement.",
                      " | 공개 A760 실측의 ROM 버전과 다릅니다.");
-    if (rom_ok) *rom_ok = rom.bytes[6] == 1;
+    if (rom_ok && rom.bytes[6] == 1) {
+        report += '\n';
+        *rom_ok = verify_security_project(raw, handle, event_pipe, event.get(), report);
+    }
     return report;
 }
 
@@ -286,6 +308,9 @@ bool initialize_a760_ram(void *device, void *usb, uint8_t event_pipe,
         log("ABORT: expected ROM=1 (chip ID 2)");
         return false;
     }
+
+    if (!verify_security_project(device, usb, event_pipe, event.get(), report))
+        return false;
 
     const auto deadline = GetTickCount64() + 35000;
     const size_t count = payload.size() / a760::fragment_size + 1;
