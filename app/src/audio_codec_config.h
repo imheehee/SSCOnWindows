@@ -20,8 +20,8 @@ inline uint8_t aac_object(const AacCaps &caps, uint32_t rate, uint8_t channels) 
     const unsigned channel = channels == 1 ? 8 : channels == 2 ? 4
                                                                : 0;
     if (!(caps.rates & frequency) || !(caps.channels & channel)) return 0;
-    // The AVDTP typed settings use enum values 1=MPEG-2 LC, 2=MPEG-4 LC.
-    return caps.object & 0x40 ? 2 : caps.object & 0x80 ? 1
+    // BTstack drops the DRC bit from its capability event. Typed settings use 1=MPEG-2 LC, 2=MPEG-4 LC.
+    return caps.object & 0x20 ? 2 : caps.object & 0x40 ? 1
                                                        : 0;
 }
 
