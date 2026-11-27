@@ -6,12 +6,14 @@
 #include "driver_mode.h"
 #include "a760_diagnostics.h"
 #include "ssc_runtime.h"
+#include <winrt/Windows.ApplicationModel.DataTransfer.h>
 #include <shellapi.h>
 #include <shobjidl.h>
 #include <fstream>
 #include "driver_switch.h"
 #include "ssc_encoder.h"
 
+#include <algorithm>
 #include <thread>
 #include <cwchar>
 #include <optional>
@@ -40,7 +42,7 @@ namespace
         return IsKorean() ? korean : english;
     }
 
-    std::filesystem::path ChooseA760Path(bool saveLog, bool encoder = false)
+    std::filesystem::path ChooseA760Path(bool saveLog, bool encoder = false, const wchar_t* logName = L"a760-session.txt")
     {
         auto dialog = saveLog
             ? winrt::create_instance<IFileDialog>(CLSID_FileSaveDialog)
@@ -50,7 +52,7 @@ namespace
         winrt::check_hresult(dialog->SetOptions(options | FOS_FORCEFILESYSTEM |
                                                (saveLog ? FOS_OVERWRITEPROMPT : encoder ? FOS_FILEMUSTEXIST : FOS_PICKFOLDERS)));
         if (saveLog) {
-            winrt::check_hresult(dialog->SetFileName(L"a760-session.txt"));
+            winrt::check_hresult(dialog->SetFileName(logName));
             winrt::check_hresult(dialog->SetDefaultExtension(L"txt"));
         } else if (encoder) {
             winrt::check_hresult(dialog->SetTitle(L"libScalable_Encoder.so"));
@@ -454,6 +456,8 @@ namespace winrt::A2DPWBWinUI::implementation
 
         // Load settings and saved devices (mirrors wxWidgets MainFrame init)
         settings_.load();
+        AudioBufferSlider().Value(std::clamp<uint32_t>(settings_.audio_buffer_ms, 10, 150));
+        A760AutoInitCheck().IsChecked(settings_.a760_auto_init);
         SscEngineCombo().SelectedIndex(settings_.ssc_native ? 1 : 0);
         service_->load_saved_devices();
         const auto adapter = FindRtl8761Adapter();
@@ -585,7 +589,12 @@ namespace winrt::A2DPWBWinUI::implementation
         UpdateFreshness();
 
         // Auto-connect (plan section 3): resume the last device at launch
-        if (settings_.auto_connect_on_start && !settings_.last_device_mac.empty()) {
+        if (settings_.a760_auto_init &&
+            detect_dongle_driver(A760_VID, A760_PID).mode == DongleDriverMode::WinUsbStream) {
+            dispatcher_.TryEnqueue([weak = get_weak()] {
+                if (auto self = weak.get()) self->InitializeA760(true);
+            });
+        } else if (settings_.auto_connect_on_start && !settings_.last_device_mac.empty()) {
             if (!adapter_ready) {
                 AppendLog(LogTag::Warn, "Auto-connect skipped: dongle is not in WinUSB (Streaming) mode. "
                           "See the WinUSB setup instructions in Troubleshooting.");
@@ -642,6 +651,7 @@ namespace winrt::A2DPWBWinUI::implementation
         profile.capture_mode = "loopback";
         profile.sample_rate = SelectedSampleRate();
         profile.ssc_native = settings_.ssc_native;
+        profile.audio_buffer_ms = settings_.audio_buffer_ms;
 
         AppendLog("Connecting to " + selectedDevice_.name + " [" + profile.codec + "]...");
         RememberLastDevice(profile.device_address, profile.device_name);
@@ -684,7 +694,13 @@ namespace winrt::A2DPWBWinUI::implementation
 
         ConnectionProfile profile{};
         profile.device_address = mac;
-        profile.device_name = "Buds3 FE";
+        profile.device_name = mac;
+        for (const auto& device : service_->get_devices()) {
+            if (device.addr_str == mac && !device.name.empty()) {
+                profile.device_name = device.name;
+                break;
+            }
+        }
         profile.codec = ProfileManager::index_to_codec(selectedCodecIndex_);
         profile.quality = ProfileManager::index_to_quality(selectedQualityIndex_);
         profile.bitrate_kbps = static_cast<uint32_t>(selectedBitrateKbps_);
@@ -692,6 +708,7 @@ namespace winrt::A2DPWBWinUI::implementation
         profile.capture_mode = "loopback";
         profile.sample_rate = SelectedSampleRate();
         profile.ssc_native = settings_.ssc_native;
+        profile.audio_buffer_ms = settings_.audio_buffer_ms;
 
         AppendLog("Direct connect to " + mac + " [" + profile.codec + "]...");
         RememberLastDevice(profile.device_address, profile.device_name);
@@ -938,7 +955,8 @@ namespace winrt::A2DPWBWinUI::implementation
             if (DeviceCapsText()) UpdateDeviceCaps();
         }
         ConnectButton().Content(winrt::box_value(streaming ? UiText(L"Disconnect", L"연결 끊기") : UiText(L"Connect", L"연결")));
-        DirectConnectButton().Content(winrt::box_value(streaming ? UiText(L"Disconnect", L"연결 끊기") : UiText(L"Direct Connect", L"주소로 연결")));
+        DirectConnectButton().IsEnabled(!streaming);
+        DirectConnectButton().Content(winrt::box_value(UiText(L"Direct Connect", L"주소로 연결")));
     }
 
     void MainWindow::StopStream()
@@ -966,6 +984,7 @@ namespace winrt::A2DPWBWinUI::implementation
         profile.capture_mode = "loopback";
         profile.sample_rate = SelectedSampleRate();
         profile.ssc_native = settings_.ssc_native;
+        profile.audio_buffer_ms = settings_.audio_buffer_ms;
 
         AppendLog(logText + " -> " + name + " [" + profile.codec + "]...");
         RememberLastDevice(mac, name);
@@ -1104,6 +1123,14 @@ namespace winrt::A2DPWBWinUI::implementation
         char buf[128];
         snprintf(buf, sizeof(buf), UiText("Latency: %.2f ms", "지연 시간: %.2f ms"), stats.latency_ms);
         LatencyText().Text(AToW(buf));
+        char timing[512];
+        snprintf(timing, sizeof(timing), UiText(
+            "Encode avg %.2f / max %.2f / P95 %.2f / P99 %.2f ms | budget %.2f ms | exceeded %llu | playout stalls %llu | PCM %.1f ms",
+            "인코딩 평균 %.2f / 최대 %.2f / P95 %.2f / P99 %.2f ms | 프레임 한도 %.2f ms | 초과 %llu회 | 전송 지연 %llu회 | PCM %.1f ms"),
+            stats.encode_mean_ms, stats.encode_max_ms, stats.encode_p95_ms, stats.encode_p99_ms,
+            stats.frame_budget_ms, static_cast<unsigned long long>(stats.deadline_exceeded),
+            static_cast<unsigned long long>(stats.playout_stalls), stats.pcm_buffer_ms);
+        EncodeBudgetText().Text(AToW(timing));
         snprintf(buf, sizeof(buf), UiText("Error Rate: %.2f%%", "오류율: %.2f%%"), stats.error_rate * 100.0);
         ErrorRateText().Text(AToW(buf));
         snprintf(buf, sizeof(buf), UiText("Loss Rate: %.2f%%", "손실률: %.2f%%"), stats.loss_rate * 100.0);
@@ -1131,7 +1158,7 @@ namespace winrt::A2DPWBWinUI::implementation
          * values, never a bare number. */
         const char* verdict = UiText("Good", "양호");
         LogTag tone = LogTag::Ok;
-        if (stats.latency_ms > 18.0 || stats.error_rate >= 0.05 ||
+        if ((stats.frame_budget_ms > 0 && stats.encode_mean_ms > stats.frame_budget_ms) || stats.error_rate >= 0.05 ||
             stats.loss_rate >= 0.02 || stats.queue_depth >= 32) {
             verdict = UiText("Poor", "불량");
             tone = LogTag::Error;
@@ -1147,8 +1174,8 @@ namespace winrt::A2DPWBWinUI::implementation
             if (!why.empty()) why += "; ";
             why += s;
         };
-        if (stats.latency_ms > 18.0)
-            why_add("encoder too slow for the frame budget");
+        if (stats.frame_budget_ms > 0 && stats.encode_mean_ms > stats.frame_budget_ms)
+            why_add(UiText("mean encode time exceeds the frame budget", "평균 인코딩 시간이 프레임 시간보다 깁니다"));
         if (stats.error_rate >= 0.01)
             why_add("send errors");
         if (stats.loss_rate >= 0.005)
@@ -1393,6 +1420,50 @@ namespace winrt::A2DPWBWinUI::implementation
         }
     }
 
+    void MainWindow::OnAudioBufferPresetChanged(IInspectable const&, SelectionChangedEventArgs const&)
+    {
+        if (!uiReady_) return;
+        const int index = AudioBufferPreset().SelectedIndex();
+        if (index >= 0 && index <= 2) AudioBufferSlider().Value(index == 0 ? 16 : index == 1 ? 40 : 80);
+    }
+
+    void MainWindow::OnAudioBufferChanged(IInspectable const&, Controls::Primitives::RangeBaseValueChangedEventArgs const& args)
+    {
+        if (!uiReady_) return;
+        settings_.audio_buffer_ms = static_cast<uint32_t>(args.NewValue());
+        settings_.save();
+    }
+
+    void MainWindow::OnA760AutoInitChanged(IInspectable const&, RoutedEventArgs const&)
+    {
+        if (!uiReady_) return;
+        settings_.a760_auto_init = A760AutoInitCheck().IsChecked().Value();
+        settings_.save();
+    }
+
+    void MainWindow::OnCopyDiagnosticLog(IInspectable const&, RoutedEventArgs const&)
+    {
+        Windows::ApplicationModel::DataTransfer::DataPackage data;
+        data.SetText(AToW(diagnostic_log_ + "\n" + a760Log_ + "\n" + (service_ ? service_->negotiation_log() : "")));
+        Windows::ApplicationModel::DataTransfer::Clipboard::SetContent(data);
+        Windows::ApplicationModel::DataTransfer::Clipboard::Flush();
+    }
+
+    void MainWindow::OnSaveDiagnosticLog(IInspectable const&, RoutedEventArgs const&)
+    {
+        try {
+            const auto path = ChooseA760Path(true, false, L"ssconwindows-diagnostics.txt");
+            if (path.empty()) return;
+            std::ofstream output(path, std::ios::binary);
+            output << diagnostic_log_ << "\n" << a760Log_ << "\n";
+            if (service_) output << service_->negotiation_log();
+            output.close();
+            if (!output) throw std::runtime_error("log write failed");
+        } catch (...) {
+            AppendLog(LogTag::Error, UiText("Could not save diagnostics.", "진단 로그를 저장하지 못했습니다."));
+        }
+    }
+
     void MainWindow::OnSscEngineChanged(IInspectable const&, SelectionChangedEventArgs const&)
     {
         if (!uiReady_) return;
@@ -1587,9 +1658,9 @@ namespace winrt::A2DPWBWinUI::implementation
         InitializeA760();
     }
 
-    winrt::fire_and_forget MainWindow::InitializeA760()
+    winrt::fire_and_forget MainWindow::InitializeA760(bool atStartup)
     {
-        if (a760Busy_ || sscBusy_ || !a760Firmware_ || !service_) co_return;
+        if (a760Busy_ || sscBusy_ || !service_ || (!atStartup && !a760Firmware_)) co_return;
         if (service_->bluetooth_busy()) {
             ShowA760Result(UiText("Stop discovery and streaming before starting the experiment.",
                                  "실험을 시작하기 전에 장치 검색과 스트리밍을 중지하세요."));
@@ -1597,30 +1668,33 @@ namespace winrt::A2DPWBWinUI::implementation
         }
         auto lifetime = get_strong();
         SetA760Busy(true);
-        ContentDialog approval;
-        approval.Title(box_value(UiText(L"Experimental A760 RAM patch", L"A760 실험용 RAM 패치")));
-        TextBlock body;
-        body.TextWrapping(TextWrapping::Wrap);
-        body.Text(UiText(L"Load the verified Linux patch into RAM on one A760 REV_0200? This Windows path is experimental. If it fails, unplug and reconnect the dongle.",
-                         L"검증한 Linux 패치를 A760 REV_0200 한 대의 RAM에 로드하시겠습니까? Windows 실험 경로입니다. 실패하면 동글을 뺐다가 다시 연결하세요."));
-        approval.Content(body);
-        approval.PrimaryButtonText(UiText(L"Approve RAM load", L"RAM 로드 승인"));
-        approval.CloseButtonText(UiText(L"Cancel", L"취소"));
-        approval.DefaultButton(ContentDialogButton::Close);
-        approval.XamlRoot(Content().XamlRoot());
-        ContentDialogResult result = ContentDialogResult::None;
-        try {
-            result = co_await approval.ShowAsync();
-        } catch (...) {
-            SetA760Busy(false);
-            co_return;
+        std::optional<A760Firmware> prepared;
+        if (!atStartup) {
+            ContentDialog approval;
+            approval.Title(box_value(UiText(L"Experimental A760 RAM patch", L"A760 실험용 RAM 패치")));
+            TextBlock body;
+            body.TextWrapping(TextWrapping::Wrap);
+            body.Text(UiText(L"Load the verified Linux patch into RAM on one A760 REV_0200? This Windows path is experimental. If it fails, unplug and reconnect the dongle.",
+                             L"검증한 Linux 패치를 A760 REV_0200 한 대의 RAM에 로드하시겠습니까? Windows 실험 경로입니다. 실패하면 동글을 뺐다가 다시 연결하세요."));
+            approval.Content(body);
+            approval.PrimaryButtonText(UiText(L"Approve RAM load", L"RAM 로드 승인"));
+            approval.CloseButtonText(UiText(L"Cancel", L"취소"));
+            approval.DefaultButton(ContentDialogButton::Close);
+            approval.XamlRoot(Content().XamlRoot());
+            ContentDialogResult result = ContentDialogResult::None;
+            try {
+                result = co_await approval.ShowAsync();
+            } catch (...) {
+                SetA760Busy(false);
+                co_return;
+            }
+            if (result != ContentDialogResult::Primary) {
+                SetA760Busy(false);
+                co_return;
+            }
+            prepared = std::move(*a760Firmware_);
+            a760Firmware_.reset();
         }
-        if (result != ContentDialogResult::Primary) {
-            SetA760Busy(false);
-            co_return;
-        }
-        auto prepared = std::move(*a760Firmware_);
-        a760Firmware_.reset();
         hasSelectedDevice_ = false;
         DeviceListView().Items().Clear();
         ConnectButton().IsEnabled(false);
@@ -1630,7 +1704,10 @@ namespace winrt::A2DPWBWinUI::implementation
         std::string report;
         bool ready = false;
         try {
-            ready = service_->start_a760_experiment(std::move(prepared), report);
+            if (atStartup) prepared = A760Firmware::prepare({}, report);
+            ready = service_->start_a760_experiment(std::move(*prepared), report);
+        } catch (const std::exception& error) {
+            report += std::string("ABORT: ") + error.what() + "\n";
         } catch (...) {
             report += "ABORT: initialization error\n";
         }
@@ -1642,6 +1719,8 @@ namespace winrt::A2DPWBWinUI::implementation
                                  "중단했습니다. 다시 시도하기 전에 A760을 뺐다가 연결하세요.");
         ShowA760Result(std::move(report));
         SetA760Busy(false);
+        if (ready && atStartup && settings_.auto_connect_on_start && !settings_.last_device_mac.empty())
+            StartStream(settings_.last_device_mac, settings_.last_device_name, UiText("Auto-connect", "자동 연결"));
     }
 
     void MainWindow::OnA760SaveLogClick(IInspectable const&, RoutedEventArgs const&)
@@ -1711,6 +1790,7 @@ namespace winrt::A2DPWBWinUI::implementation
     {
         if (a760Active_ && text.rfind("[A760] ", 0) != 0 && a760Log_.size() < 1024 * 1024)
             a760Log_ += text + "\n";
+        diagnostic_log_ += text + "\n";
         Microsoft::UI::Xaml::Media::SolidColorBrush brush{ nullptr };
         switch (tag) {
         case LogTag::Ok:    brush = TagBrush(L"TagOkBrush");    break;

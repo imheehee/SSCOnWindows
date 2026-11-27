@@ -285,4 +285,28 @@
   <data name="SscTestButton.Content" xml:space="preserve">
     <value>연결 전 SSC 인코더 자체 테스트</value>
   </data>
+  <data name="AudioBufferPreset.Header" xml:space="preserve">
+    <value>재생 버퍼 모드</value>
+  </data>
+  <data name="AudioBufferLow.Content" xml:space="preserve">
+    <value>저지연</value>
+  </data>
+  <data name="AudioBufferBalanced.Content" xml:space="preserve">
+    <value>균형</value>
+  </data>
+  <data name="AudioBufferStable.Content" xml:space="preserve">
+    <value>안정성 우선</value>
+  </data>
+  <data name="AudioBufferSlider.Header" xml:space="preserve">
+    <value>버퍼 크기(ms)</value>
+  </data>
+  <data name="A760AutoInitCheck.Content" xml:space="preserve">
+    <value>시작 시 검증된 A760 RAM 초기화 허용</value>
+  </data>
+  <data name="CopyDiagnosticLog.Content" xml:space="preserve">
+    <value>진단 로그 복사</value>
+  </data>
+  <data name="SaveDiagnosticLog.Content" xml:space="preserve">
+    <value>진단 로그 저장</value>
+  </data>
 </root>

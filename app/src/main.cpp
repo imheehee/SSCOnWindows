@@ -622,12 +622,15 @@ static int run_streaming(const uint8_t target_addr[6],
     std::wstring saved_default_device;
     const bool exact_ssc_rate = selected_codec == AudioCodec::SSC;
     const auto ssc_cap = transport.get_remote_caps().ssc_cap;
-    const uint32_t capture_rate = exact_ssc_rate ? codec_policy::ssc_capture_rate(ssc_cap, 0) : 0;
+    const uint32_t capture_rate = selected_codec == AudioCodec::SSC
+                                      ? (exact_ssc_rate ? codec_policy::ssc_capture_rate(ssc_cap, 0) : 0)
+                                      : transport.compatible_capture_rate(selected_codec, 48000);
+    const bool exact_capture_rate = capture_rate != 0;
 
     switch (capture_mode) {
     case CaptureMode::SystemLoopback:
         printf("Capture mode: System Loopback\n");
-        if (!wasapi_capture.init(capture_rate, nullptr, exact_ssc_rate)) {
+        if (!wasapi_capture.init(capture_rate, nullptr, exact_capture_rate)) {
             cstyle::fprint(stderr, cstyle::Tag::Error,
                            "Failed to initialize WASAPI capture\n");
             transport.disconnect();
@@ -648,7 +651,7 @@ static int run_streaming(const uint8_t target_addr[6],
         /* Save and switch default device */
         saved_default_device = AudioDeviceEnumerator::get_default_device_id();
         AudioDeviceEnumerator::set_default_device(audio_device_id);
-        if (!wasapi_capture.init(capture_rate, audio_device_id, exact_ssc_rate)) {
+        if (!wasapi_capture.init(capture_rate, audio_device_id, exact_capture_rate)) {
             cstyle::fprint(stderr, cstyle::Tag::Error,
                            "Failed to initialize capture on virtual device\n");
             if (!saved_default_device.empty())
@@ -693,7 +696,7 @@ static int run_streaming(const uint8_t target_addr[6],
 
     /* Configure stream — use encode_sr for the remote side */
     if (!transport.configure_codec(selected_codec, encode_sr,
-                                   static_cast<uint8_t>(g_active_channels))) {
+                                   static_cast<uint8_t>(g_active_channels), quality)) {
         cstyle::fprint(stderr, cstyle::Tag::Error, "Failed to configure %s stream\n",
                        codec_name_str(selected_codec));
         transport.disconnect();
@@ -707,13 +710,19 @@ static int run_streaming(const uint8_t target_addr[6],
     if (media_mtu == 0) media_mtu = 679;
 
     switch (selected_codec) {
-    case AudioCodec::SBC:
-        encoder = std::make_unique<SbcEncoder>();
+    case AudioCodec::SBC: {
+        auto sbc = std::make_unique<SbcEncoder>();
+        sbc->set_negotiated(transport.negotiated_sbc_bitpool(), transport.negotiated_sbc_mode());
+        encoder = std::move(sbc);
         break;
+    }
 #ifdef AAC_ENCODER_AVAILABLE
-    case AudioCodec::AAC:
-        encoder = std::make_unique<AacEncoder>();
+    case AudioCodec::AAC: {
+        auto aac = std::make_unique<AacEncoder>();
+        aac->set_negotiated(transport.negotiated_aac_bitrate(), transport.negotiated_aac_mpeg2());
+        encoder = std::move(aac);
         break;
+    }
 #else
     case AudioCodec::AAC:
         cstyle::fprint(stderr, cstyle::Tag::Error,

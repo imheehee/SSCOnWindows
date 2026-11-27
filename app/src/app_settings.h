@@ -13,6 +13,8 @@ class AppSettings {
 public:
     /* Load settings from %APPDATA%\A2DPWB\settings.json */
     bool ssc_native = false;
+    uint32_t audio_buffer_ms = 40;
+    bool a760_auto_init = false;
     void load();
 
     /* Save current settings to disk */

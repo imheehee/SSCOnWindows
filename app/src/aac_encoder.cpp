@@ -24,9 +24,12 @@ extern "C" {
 /* Quality -> target bitrate mapping */
 static uint32_t quality_to_bitrate(EncoderQuality q) {
     switch (q) {
-    case EncoderQuality::High:     return 256000;
-    case EncoderQuality::Standard: return 192000;
-    case EncoderQuality::Mobile:   return 128000;
+    case EncoderQuality::High:
+        return 256000;
+    case EncoderQuality::Standard:
+        return 192000;
+    case EncoderQuality::Mobile:
+        return 128000;
     }
     return 256000;
 }
@@ -54,7 +57,7 @@ bool AacEncoder::init(uint16_t mtu, EncoderQuality quality,
         return false;
     }
 
-    bitrate_ = quality_to_bitrate(quality);
+    bitrate_ = negotiated_bitrate_ ? negotiated_bitrate_ : quality_to_bitrate(quality);
 
     /* Open fdk-aac encoder */
     HANDLE_AACENCODER enc = nullptr;
@@ -65,12 +68,12 @@ bool AacEncoder::init(uint16_t mtu, EncoderQuality quality,
     }
 
     /* Configure AAC-LC profile (required by A2DP) */
-    aacEncoder_SetParam(enc, AACENC_AOT, AOT_AAC_LC);
+    aacEncoder_SetParam(enc, AACENC_AOT, mpeg2_ ? AOT_MP2_AAC_LC : AOT_AAC_LC);
     aacEncoder_SetParam(enc, AACENC_SAMPLERATE, sample_rate);
     aacEncoder_SetParam(enc, AACENC_CHANNELMODE, (channels == 1) ? MODE_1 : MODE_2);
     aacEncoder_SetParam(enc, AACENC_BITRATE, bitrate_);
     aacEncoder_SetParam(enc, AACENC_TRANSMUX, TT_MP4_LATM_MCP1);
-    aacEncoder_SetParam(enc, AACENC_AFTERBURNER, 1);  /* Higher quality */
+    aacEncoder_SetParam(enc, AACENC_AFTERBURNER, 1); /* Higher quality */
 
     /* Initialize the encoder */
     err = aacEncEncode(enc, nullptr, nullptr, nullptr, nullptr);
@@ -99,9 +102,9 @@ bool AacEncoder::init(uint16_t mtu, EncoderQuality quality,
     initialized_ = true;
 
     fprintf(stderr, "AacEncoder: Initialized (rate=%u, ch=%u, mtu=%u, bitrate=%ukbps, "
-           "frame_len=%u, max_out=%u)\n",
-           sample_rate, channels, mtu, bitrate_ / 1000,
-           frame_length_, max_out_size_);
+                    "frame_len=%u, max_out=%u)\n",
+            sample_rate, channels, mtu, bitrate_ / 1000,
+            frame_length_, max_out_size_);
     return true;
 }
 

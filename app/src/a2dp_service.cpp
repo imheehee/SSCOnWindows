@@ -226,12 +226,11 @@ static void service_audio_callback(
     uint32_t byte_size = frames * channels * (bits_per_sample / 8);
     if (byte_size == 0) return;
 
-    g_ctx.ring.channels = channels;
-    g_ctx.ring.sample_rate = sample_rate;
-    g_ctx.ring.bits_per_sample = bits_per_sample;
+    if (channels != g_ctx.ring.channels || sample_rate != g_ctx.ring.sample_rate ||
+        bits_per_sample != g_ctx.ring.bits_per_sample) return;
 
     if (g_ctx.ring.available_write() < byte_size) {
-        ring_overflow_count.fetch_add(1, std::memory_order_relaxed);
+        ring_overflow_count.fetch_add(frames, std::memory_order_relaxed);
         return;
     }
     g_ctx.ring.write(data, byte_size);
@@ -248,7 +247,12 @@ static DWORD WINAPI encode_thread_func(LPVOID) {
     std::vector<uint8_t> read_buf;
     std::vector<uint8_t> downmixed_buf;
     std::vector<uint8_t> combined;
-    std::vector<uint8_t> src_buf; /* scratch for 48k→96k upsample */
+    std::vector<uint8_t> src_buf;
+    std::vector<float> previous_float;
+    std::vector<int16_t> previous_int;
+    audio_timing::EncodeWindow timing;
+    LARGE_INTEGER frequency{};
+    QueryPerformanceFrequency(&frequency);
     uint8_t accum[2048];
     uint32_t log_tick = 0;
 
@@ -292,14 +296,17 @@ static DWORD WINAPI encode_thread_func(LPVOID) {
                 /* %% SSC UHQ: 2x upsampling (48 kHz WASAPI capture → 96 kHz encode)
                  * Applied on the interleaved float32 data right after the ring read,
                  * before the integer conversion.  Doubles frames accordingly. */
-                uint32_t encode_sr = g_ctx.encode_sample_rate; /* non-atomic; set once before thread start */
-                if (encode_sr == 96000 && channels == 2 && bits_per_sample == 32) {
-                    uint32_t in_frames = frames;
-                    src_buf.resize(in_frames * 8); /* 2x frames × 2ch × 4B */
-                    uint32_t out_frames = upsample_2x_stereo_f32(
-                        reinterpret_cast<const float *>(read_buf.data()), in_frames,
-                        reinterpret_cast<float *>(src_buf.data()), in_frames * 2);
-                    frames = out_frames;
+                const uint32_t encode_sr = g_ctx.encode_sample_rate;
+                if (encode_sr == sample_rate * 2) {
+                    src_buf.resize(static_cast<size_t>(read_bytes) * 2);
+                    if (bits_per_sample == 32) {
+                        audio_timing::upsample_2x(reinterpret_cast<const float *>(read_buf.data()),
+                                                  frames, channels, previous_float, reinterpret_cast<float *>(src_buf.data()));
+                    } else if (bits_per_sample == 16) {
+                        audio_timing::upsample_2x(reinterpret_cast<const int16_t *>(read_buf.data()),
+                                                  frames, channels, previous_int, reinterpret_cast<int16_t *>(src_buf.data()));
+                    }
+                    frames *= 2;
                     read_buf.swap(src_buf);
                 }
 
@@ -335,7 +342,7 @@ static DWORD WINAPI encode_thread_func(LPVOID) {
                         const int16_t *src16 = reinterpret_cast<const int16_t *>(read_buf.data());
                         int32_t *dst32 = reinterpret_cast<int32_t *>(g_ctx.pcm_buffer.data());
                         for (uint32_t i = 0; i < total_samples; i++)
-                            dst32[i] = static_cast<int32_t>(src16[i]) << 16;
+                            dst32[i] = static_cast<int32_t>(src16[i]) * 16384;
                         pcm_data = g_ctx.pcm_buffer.data();
                     }
                 } else {
@@ -365,6 +372,7 @@ static DWORD WINAPI encode_thread_func(LPVOID) {
                 /* Combine with residual and encode */
                 uint32_t new_pcm_bytes = frames * use_channels * static_cast<uint32_t>(bps);
                 uint32_t pcm_frames_per_encode = encoder->get_pcm_frames_per_encode();
+                const double budget = audio_timing::frame_ms(pcm_frames_per_encode, encode_sr);
                 uint32_t bytes_per_encode = pcm_frames_per_encode * use_channels * static_cast<uint32_t>(bps);
 
                 if (g_ctx.encode_buffer.size() < 4096)
@@ -396,15 +404,15 @@ static DWORD WINAPI encode_thread_func(LPVOID) {
                     uint32_t out_frames = 0;
 
                     /* Track encode round-trip (EWMA) */
-                    LARGE_INTEGER tsq, tse, tsf;
-                    QueryPerformanceFrequency(&tsf);
+                    LARGE_INTEGER tsq, tse;
                     QueryPerformanceCounter(&tsq);
 
                     bool ok = encoder->encode(pcm_data + offset, bytes_per_encode,
                                               g_ctx.encode_buffer.data(), &out_size, &out_frames);
 
                     QueryPerformanceCounter(&tse);
-                    double ms = (double)(tse.QuadPart - tsq.QuadPart) * 1000.0 / (double)tsf.QuadPart;
+                    double ms = (double)(tse.QuadPart - tsq.QuadPart) * 1000.0 / (double)frequency.QuadPart;
+                    timing.add(ms, budget);
                     double cur = g_ctx.stats_latency_ms.load(std::memory_order_relaxed);
                     g_ctx.stats_latency_ms.store(cur == 0.0 ? ms : cur * 0.8 + ms * 0.2,
                                                  std::memory_order_relaxed);
@@ -413,7 +421,8 @@ static DWORD WINAPI encode_thread_func(LPVOID) {
                         g_ctx.stats_bitrate_kbps.store(encoder->get_bitrate_kbps(), std::memory_order_relaxed);
 
                     if (ok && out_size > 0) {
-                        if (accum_size + out_size > max_raw && accum_frames > 0) {
+                        const bool packet_per_frame = g_ctx.active_codec != AudioCodec::SBC;
+                        if ((packet_per_frame || accum_size + out_size > max_raw || accum_frames + out_frames > 15) && accum_frames > 0) {
                             bool sent = transport->send_media(accum, accum_size, first_ts,
                                                               static_cast<uint8_t>(accum_frames), g_ctx.active_codec);
                             g_ctx.stats_total_sends.fetch_add(1, std::memory_order_relaxed);
@@ -422,10 +431,13 @@ static DWORD WINAPI encode_thread_func(LPVOID) {
                             accum_frames = 0;
                             first_ts = g_ctx.timestamp;
                         }
-                        if (accum_size + out_size <= sizeof(accum)) {
+                        if (accum_size + out_size <= sizeof(accum) && accum_size + out_size <= max_raw) {
                             memcpy(accum + accum_size, g_ctx.encode_buffer.data(), out_size);
                             accum_size += out_size;
                             accum_frames += out_frames;
+                            if (accum_frames == out_frames) first_ts = g_ctx.timestamp;
+                        } else {
+                            g_ctx.stats_send_fails.fetch_add(1, std::memory_order_relaxed);
                         }
                     }
 
@@ -464,6 +476,15 @@ static DWORD WINAPI encode_thread_func(LPVOID) {
 
                         /* Publish live stats to UI (1 Hz equivalent) */
                         A2dpService::StreamStats st;
+                        const auto measured = timing.stats();
+                        st.encode_mean_ms = measured.mean;
+                        st.encode_max_ms = measured.max;
+                        st.encode_p95_ms = measured.p95;
+                        st.encode_p99_ms = measured.p99;
+                        st.frame_budget_ms = budget;
+                        st.deadline_exceeded = measured.exceeded;
+                        st.playout_stalls = t ? t->playout_stalls() : 0;
+                        st.pcm_buffer_ms = audio_timing::frame_ms(g_ctx.ring.available_read() / frame_bytes, sample_rate);
                         st.latency_ms = g_ctx.stats_latency_ms.load(std::memory_order_relaxed);
                         st.error_rate = 0.0;
                         st.loss_rate = 0.0;
@@ -471,10 +492,10 @@ static DWORD WINAPI encode_thread_func(LPVOID) {
                         st.queue_depth = qd;
                         st.total_sends = g_ctx.stats_total_sends.load(std::memory_order_relaxed);
                         st.send_fails = g_ctx.stats_send_fails.load(std::memory_order_relaxed);
-                        st.captured_frames = diag_capture_bytes.load(std::memory_order_relaxed) / (bytes_per_encode > 0 ? bytes_per_encode : 1);
+                        st.captured_frames = diag_capture_bytes.load(std::memory_order_relaxed) / frame_bytes;
                         st.encode_calls = g_ctx.stats_encode_calls.load(std::memory_order_relaxed);
                         if (st.send_fails > 0)
-                            st.error_rate = (double)st.send_fails / (double)(st.total_sends + st.send_fails);
+                            st.error_rate = (double)st.send_fails / (double)std::max(st.total_sends, st.send_fails);
                         if (st.captured_frames > 0) {
                             uint32_t oflow = ring_overflow_count.exchange(0, std::memory_order_relaxed);
                             st.dropped_frames = oflow;
@@ -813,10 +834,21 @@ void A2dpService::download_firmware() {
 /* BTstack lifecycle                                                         */
 /* ======================================================================== */
 
+std::string A2dpService::negotiation_log() {
+    std::lock_guard<std::mutex> lock(transport_mutex_);
+    return transport_ ? transport_->negotiation_log() : std::string{};
+}
+
 bool A2dpService::ensure_btstack_init() {
     std::lock_guard<std::mutex> lock(transport_mutex_);
-    if (btstack_ready_.load()) return true;
-    if (btstack_init_failed_.load()) return false;
+    if (btstack_ready_.load() && transport_ && transport_->hci_ready()) return true;
+    btstack_ready_.store(false);
+    if (transport_ && transport_->uses_a760()) {
+        btstack_init_failed_.store(true);
+        return false;
+    }
+    if (transport_) transport_->shutdown();
+    btstack_init_failed_.store(false);
 
     return initialize_btstack_locked(nullptr, nullptr);
 }
@@ -1223,15 +1255,21 @@ void A2dpService::streaming_thread_func_inner() {
     int capture_mode_index = ProfileManager::capture_mode_to_index(p.capture_mode);
     CaptureMode cmode = static_cast<CaptureMode>(capture_mode_index);
 
-    const bool exact_ssc_rate = selected_codec == AudioCodec::SSC;
-    const uint32_t preferred_sr = exact_ssc_rate
+    const bool is_ssc = selected_codec == AudioCodec::SSC;
+    const uint32_t preferred_sr = is_ssc
                                       ? codec_policy::ssc_capture_rate(caps.ssc_cap, p.sample_rate)
-                                      : p.sample_rate;
+                                      : transport->compatible_capture_rate(selected_codec, p.sample_rate);
+    if (!preferred_sr) {
+        notify_state(State::Error, L("error.codec_configure"));
+        transport->disconnect();
+        running_.store(false);
+        return;
+    }
     bool output_muted = false;
 
     switch (cmode) {
     case CaptureMode::SystemLoopback:
-        if (!wasapi_capture.init(preferred_sr, nullptr, exact_ssc_rate)) {
+        if (!wasapi_capture.init(preferred_sr, nullptr, true)) {
             notify_state(State::Error, L("error.wasapi_init"));
             transport->disconnect();
             running_.store(false);
@@ -1262,7 +1300,7 @@ void A2dpService::streaming_thread_func_inner() {
                 fprintf(stderr, "warning: failed to switch default device\n");
             }
         }
-        if (!wasapi_capture.init(preferred_sr, dev_id.c_str(), exact_ssc_rate)) {
+        if (!wasapi_capture.init(preferred_sr, dev_id.c_str(), true)) {
             notify_state(State::Error, L("error.virtual_capture_init"));
             if (p.auto_switch_device && !original_default_device_.empty()) {
                 AudioDeviceEnumerator::set_default_device(original_default_device_);
@@ -1310,7 +1348,7 @@ void A2dpService::streaming_thread_func_inner() {
     g_ctx.encode_sample_rate = encode_sr;
 
     /* Configure codec — use encode_sr so the remote side negotiates UHQ caps */
-    if (!transport->configure_codec(selected_codec, encode_sr, static_cast<uint8_t>(use_ch))) {
+    if (!transport->configure_codec(selected_codec, encode_sr, static_cast<uint8_t>(use_ch), quality)) {
         notify_state(State::Error, L("error.codec_configure"));
         transport->disconnect();
         running_.store(false);
@@ -1323,13 +1361,17 @@ void A2dpService::streaming_thread_func_inner() {
     if (media_mtu == 0) media_mtu = 679;
 
     switch (selected_codec) {
-    case AudioCodec::SBC:
-        encoder = std::make_unique<SbcEncoder>();
-        break;
+    case AudioCodec::SBC: {
+        auto sbc = std::make_unique<SbcEncoder>();
+        sbc->set_negotiated(transport->negotiated_sbc_bitpool(), transport->negotiated_sbc_mode());
+        encoder = std::move(sbc);
+    } break;
 #ifdef AAC_ENCODER_AVAILABLE
-    case AudioCodec::AAC:
-        encoder = std::make_unique<AacEncoder>();
-        break;
+    case AudioCodec::AAC: {
+        auto aac = std::make_unique<AacEncoder>();
+        aac->set_negotiated(transport->negotiated_aac_bitrate(), transport->negotiated_aac_mpeg2());
+        encoder = std::move(aac);
+    } break;
 #else
     case AudioCodec::AAC:
         notify_state(State::Error, L("error.aac_unavailable"));
@@ -1385,6 +1427,7 @@ void A2dpService::streaming_thread_func_inner() {
              encoder->get_bitrate_kbps());
 
     /* Start stream */
+    transport->set_playout_buffer(std::clamp<uint32_t>(p.audio_buffer_ms, 10, 150));
     if (!transport->start_stream()) {
         notify_state(State::Error, L("error.stream_start"));
         transport->disconnect();
@@ -1423,7 +1466,20 @@ void A2dpService::streaming_thread_func_inner() {
     g_ctx.running.store(true);
 
     /* Initialize ring buffer and encode thread */
-    g_ctx.ring.init(256 * 1024);
+    g_ctx.ring.channels = ch;
+    g_ctx.ring.sample_rate = sr;
+    g_ctx.ring.bits_per_sample = wasapi_capture.get_bits_per_sample();
+    uint32_t fifo_bytes = 4096;
+    const uint64_t target_bytes = uint64_t(sr) * ch * (g_ctx.ring.bits_per_sample / 8) *
+                                  std::max<uint32_t>(80, 3 * std::clamp<uint32_t>(p.audio_buffer_ms, 10, 150)) / 1000;
+    while (fifo_bytes < target_bytes) fifo_bytes *= 2;
+    diag_capture_bytes.store(0);
+    ring_overflow_count.store(0);
+    g_ctx.stats_latency_ms.store(0);
+    g_ctx.stats_total_sends.store(0);
+    g_ctx.stats_send_fails.store(0);
+    g_ctx.stats_encode_calls.store(0);
+    g_ctx.ring.init(fifo_bytes);
     HANDLE encode_thread = CreateThread(nullptr, 0, encode_thread_func, nullptr, 0, nullptr);
     if (!encode_thread) {
         notify_state(State::Error, L("error.encode_thread"));
@@ -1446,7 +1502,7 @@ void A2dpService::streaming_thread_func_inner() {
         notify_state(State::Error, L("error.audio_capture_start"));
         g_ctx.running.store(false);
         SetEvent(g_ctx.ring.data_event);
-        WaitForSingleObject(encode_thread, 5000);
+        WaitForSingleObject(encode_thread, INFINITE);
         CloseHandle(encode_thread);
         g_ctx.encoder.store(nullptr);
         g_ctx.transport.store(nullptr);
@@ -1473,10 +1529,20 @@ void A2dpService::streaming_thread_func_inner() {
         while (!stop_requested_.load()) {
             Sleep(200);
 
+            if (!g_ctx.running.load() && !stop_requested_.load()) {
+                notify_state(State::Error, L("error.encode_thread"));
+                break;
+            }
+
             if (transport->check_disconnected()) {
                 LOG_WARN("A2dpService: connection lost, attempting reconnect");
                 notify_state(State::Reconnecting, L("status.connection_lost"));
 
+                g_ctx.running.store(false);
+                SetEvent(g_ctx.ring.data_event);
+                WaitForSingleObject(encode_thread, INFINITE);
+                CloseHandle(encode_thread);
+                encode_thread = nullptr;
                 g_ctx.transport.store(nullptr);
                 g_ctx.encoder.store(nullptr);
 
@@ -1509,6 +1575,12 @@ void A2dpService::streaming_thread_func_inner() {
                                       std::memory_order_relaxed);
                 g_ctx.encoder.store(encoder.get());
                 g_ctx.transport.store(transport);
+                g_ctx.running.store(true);
+                encode_thread = CreateThread(nullptr, 0, encode_thread_func, nullptr, 0, nullptr);
+                if (!encode_thread) {
+                    notify_state(State::Error, L("error.encode_thread"));
+                    break;
+                }
                 notify_state(State::Streaming, L("status.reconnected"));
             }
         }
@@ -1525,8 +1597,10 @@ void A2dpService::streaming_thread_func_inner() {
     wasapi_capture.stop();
     g_ctx.running.store(false);
     if (g_ctx.ring.data_event) SetEvent(g_ctx.ring.data_event);
-    WaitForSingleObject(encode_thread, 5000);
-    CloseHandle(encode_thread);
+    if (encode_thread) {
+        WaitForSingleObject(encode_thread, INFINITE);
+        CloseHandle(encode_thread);
+    }
     g_ctx.encoder.store(nullptr);
     g_ctx.transport.store(nullptr);
     g_ctx.ring.destroy();

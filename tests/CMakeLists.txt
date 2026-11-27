@@ -10,6 +10,7 @@ if(BUILD_TESTING)
     add_executable(a2dpwb_tests
         src/test_main.cpp
         unit/codec_policy_tests.cpp
+        unit/audio_timing_tests.cpp
         unit/a760_payload_tests.cpp
         ${CMAKE_SOURCE_DIR}/app/src/a760_payload.cpp
         integration/negotiation_tests.cpp

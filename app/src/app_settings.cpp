@@ -44,6 +44,8 @@ void AppSettings::load() {
     reduce_motion = j.value("reduce_motion", reduce_motion);
 
     ssc_native = j.value("ssc_native", ssc_native);
+    audio_buffer_ms = j.value("audio_buffer_ms", audio_buffer_ms);
+    a760_auto_init = j.value("a760_auto_init", a760_auto_init);
 
     /* Debug */
     debug_mode = j.value("debug_mode", debug_mode);
@@ -78,6 +80,8 @@ void AppSettings::save() const {
     j["reduce_motion"] = reduce_motion;
 
     j["ssc_native"] = ssc_native;
+    j["audio_buffer_ms"] = audio_buffer_ms;
+    j["a760_auto_init"] = a760_auto_init;
 
     /* Debug */
     j["debug_mode"] = debug_mode;

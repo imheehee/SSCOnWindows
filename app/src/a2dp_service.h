@@ -66,6 +66,14 @@ public:
 
     /* Live stream statistics (1 Hz refresh) */
     struct StreamStats {
+        double encode_mean_ms = 0;
+        double encode_max_ms = 0;
+        double encode_p95_ms = 0;
+        double encode_p99_ms = 0;
+        double frame_budget_ms = 0;
+        uint64_t deadline_exceeded = 0;
+        uint64_t playout_stalls = 0;
+        double pcm_buffer_ms = 0;
         double latency_ms = 0.0;   /* encode round-trip (EWMA) */
         double error_rate = 0.0;   /* send failures / total sends (0..1) */
         double loss_rate = 0.0;    /* ring overflow drops / captured (0..1) */
@@ -100,6 +108,7 @@ public:
     };
 
     DeviceCaps get_device_caps() const;
+    std::string negotiation_log();
 
     /* ---- Callbacks (called from worker threads, must be thread-safe) ---- */
     using StateCallback = std::function<void(State state, const std::string &status_text)>;

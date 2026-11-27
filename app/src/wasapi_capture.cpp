@@ -208,44 +208,20 @@ bool WasapiCapture::init(uint32_t preferred_sample_rate, const wchar_t *device_i
                 ext->SubFormat.Data1, ext->Samples.wValidBitsPerSample);
     }
 
-    /* Larger buffer for polling mode (event-driven keeps 10ms default) */
-    REFERENCE_TIME buf_duration = static_cast<REFERENCE_TIME>(
-                                      (event_mode_ ? BUFFER_DURATION_MS : 40)) *
-                                  10000;
-
-    hr = audio_client_->Initialize(
-        AUDCLNT_SHAREMODE_SHARED,
-        stream_flags,
-        buf_duration,
-        0, /* periodicity (0 = default for shared mode) */
-        init_format,
-        nullptr /* session GUID */
-    );
-
-    if (FAILED(hr)) {
-        /* Fallback: try event-driven loopback */
-        fprintf(stderr, "WasapiCapture: Polling init failed (0x%08lx), trying event-driven\n", hr);
-        hr = audio_client_->Initialize(
-            AUDCLNT_SHAREMODE_SHARED,
-            stream_flags | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-            buf_duration,
-            0,
-            init_format,
-            nullptr);
-        if (SUCCEEDED(hr)) {
-            /* Set the event handle for event-driven mode */
-            HRESULT eh = audio_client_->SetEventHandle(buffer_event_);
-            if (SUCCEEDED(eh)) {
-                event_mode_ = true;
-                fprintf(stderr, "WasapiCapture: Using event-driven capture\n");
-            } else {
-                fprintf(stderr, "WasapiCapture: SetEventHandle failed: 0x%08lx\n", eh);
-            }
-        }
+    // Windows 11 supports shared loopback event notification. Poll only for
+    // endpoints that reject event-driven initialization.
+    event_mode_ = false;
+    hr = audio_client_->Initialize(AUDCLNT_SHAREMODE_SHARED,
+                                   stream_flags | AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 0, 0, init_format, nullptr);
+    if (SUCCEEDED(hr)) {
+        hr = audio_client_->SetEventHandle(buffer_event_);
+        event_mode_ = SUCCEEDED(hr);
     } else {
-        event_mode_ = false;
-        fprintf(stderr, "WasapiCapture: Using polling capture\n");
+        hr = audio_client_->Initialize(AUDCLNT_SHAREMODE_SHARED,
+                                       stream_flags, 400000, 0, init_format, nullptr);
     }
+    fprintf(stderr, "WasapiCapture: %s capture, init=0x%08lx\n",
+            event_mode_ ? "event-driven" : "polling", hr);
 
     CoTaskMemFree(mix_format);
 

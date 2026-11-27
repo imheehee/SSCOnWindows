@@ -40,6 +40,11 @@ namespace winrt::A2DPWBWinUI::implementation
         void OnSetupClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
         void OnEnableStreamingClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
         void OnRestoreBtClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+        void OnAudioBufferPresetChanged(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
+        void OnAudioBufferChanged(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::Controls::Primitives::RangeBaseValueChangedEventArgs const&);
+        void OnA760AutoInitChanged(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+        void OnCopyDiagnosticLog(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+        void OnSaveDiagnosticLog(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
         void OnSscEngineChanged(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
         void OnSscInstallClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
         void OnSscDiagnoseClick(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
@@ -83,7 +88,8 @@ namespace winrt::A2DPWBWinUI::implementation
         void SetSscBusy(bool busy);
         bool sscBusy_{ false };
         winrt::fire_and_forget VerifyA760Firmware(std::filesystem::path directory);
-        winrt::fire_and_forget InitializeA760();
+        winrt::fire_and_forget InitializeA760(bool atStartup = false);
+        std::string diagnostic_log_;
         void SetA760Busy(bool busy);
         void ShowA760Result(std::string result);
         bool a760Busy_{ false };

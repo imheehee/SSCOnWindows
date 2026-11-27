@@ -67,3 +67,15 @@ WinUI에서 **SSC 인코더 설치 및 설정**을 열고 실행 방식을 선�
 ## 검증 범위
 
 Windows CI의 컴파일, 단위 테스트, ZIP 검사가 통과하더라도 A760 RAM 패치와 BTstack 초기화, 검색·페어링, SM-R190의 44.1/48 kHz 오디오, Qualcomm 및 Alternative A2DP Driver 동작, Secure Boot 상태에서의 드라이버 복원을 실물 Windows PC에서 확인해야 합니다.
+
+### Ubuntu 최신 버전과 PowerShell에서 설치가 중단될 때
+
+- QEMU는 Ubuntu에서 `sudo apt update` 후 `sudo apt install gcc libc6-dev qemu-user libc6-arm64-cross`로 준비합니다. `qemu-user-static`이 가상 패키지로 표시되는 Ubuntu에서도 이 명령을 사용할 수 있습니다. 패키지에 `qemu-user-binfmt`가 포함되거나 별도로 설치되어 있어도 데몬은 `qemu-aarch64`를 직접 실행합니다. 일반적인 설치에 binfmt 등록은 필요하지 않습니다.
+- PowerShell이 스크립트 실행을 거부하면 `Get-ExecutionPolicy -List`로 어떤 범위에서 제한하는지 확인합니다. `RemoteSigned` 아래에서 다운로드 표시 때문에 차단된 경우 출처와 스크립트 내용을 확인한 뒤 해당 파일에만 `Unblock-File -LiteralPath .\tools\ssc_setup.ps1`을 적용할 수 있습니다. 조직에서 정책을 관리하는 PC는 관리자가 승인한 설치 방법을 사용하세요.
+- 기존 WSL 데몬에는 새 TCP 쓰기 경로가 없으므로 WinUI 설치 메뉴에서 재설치해 데몬을 다시 빌드한 뒤 자체 테스트를 실행하세요.
+
+### A760 및 Galaxy Buds Pro 실물 재검증
+
+1. SSC 192 kbps로 44.1 kHz와 48 kHz를 각각 재생합니다. 각 속도에서 30분 이상 재생한 뒤 평균·최대·P95·P99, 시간 초과, PCM 드롭, 전송 재동기화를 기록합니다. 버퍼를 저지연·균형·안정성 우선으로 바꾼 뒤 재연결해서 같은 구간을 비교합니다.
+2. SSC 연결을 끊은 뒤 AAC 44.1/48 kHz 및 SBC를 각각 새로 연결합니다. 거부 시 진단 로그의 SEP, 협상 요청 필드, AVDTP 응답을 함께 저장합니다. 헤드셋이 광고한 주파수와 채널 중 양쪽에서 지원하는 설정을 사용합니다.
+3. 연결 실패 뒤 USB를 유지한 채 다시 검색합니다. A760 자동 초기화를 선택한 경우 콜드 상태에서 시작해 해시 검사와 RAM 패치 로그를 확인합니다. 마지막 장치 자동 연결도 별도로 켜서 두 옵션을 함께 검증합니다.

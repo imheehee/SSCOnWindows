@@ -72,12 +72,12 @@ $kernel = (& wsl.exe @wsl --exec uname -r | Out-String)
 if ($LASTEXITCODE -ne 0 -or $kernel -notmatch 'WSL2') {
     throw 'Start an Ubuntu WSL2 distribution first. Check wsl --list --verbose and SSC_WSL_DISTRO.'
 }
-& wsl.exe @wsl --exec bash -c 'command -v gcc >/dev/null && command -v qemu-aarch64 >/dev/null && test -r /usr/aarch64-linux-gnu/lib/ld-linux-aarch64.so.1'
+& wsl.exe @wsl --exec bash -c 'command -v gcc >/dev/null && test -r /usr/include/stdlib.h && command -v qemu-aarch64 >/dev/null && test -r /usr/aarch64-linux-gnu/lib/ld-linux-aarch64.so.1'
 if ($LASTEXITCODE -ne 0) {
-    if ((Read-Host 'Install gcc, qemu-user and libc6-arm64-cross in Ubuntu using apt? [y/N]') -notmatch '^[yY]$') { return }
+    if ((Read-Host 'Install gcc, libc6-dev, qemu-user and libc6-arm64-cross in Ubuntu using apt? [y/N]') -notmatch '^[yY]$') { return }
     & wsl.exe @wsl --exec sudo apt-get update
     if ($LASTEXITCODE -ne 0) { throw 'Ubuntu apt update failed.' }
-    & wsl.exe @wsl --exec sudo apt-get install gcc qemu-user libc6-arm64-cross
+    & wsl.exe @wsl --exec sudo apt-get install gcc libc6-dev qemu-user libc6-arm64-cross
     if ($LASTEXITCODE -ne 0) { throw 'Ubuntu dependency installation failed.' }
 }
 $payload = Join-Path $PSScriptRoot 'ssc_payload\build_blob'

@@ -21,8 +21,12 @@ public:
     SbcEncoder();
     ~SbcEncoder() override;
 
-    AudioCodec codec_type() const override { return AudioCodec::SBC; }
-    const char *codec_name() const override { return "SBC"; }
+    AudioCodec codec_type() const override {
+        return AudioCodec::SBC;
+    }
+    const char *codec_name() const override {
+        return "SBC";
+    }
 
     bool init(uint16_t mtu, EncoderQuality quality,
               uint32_t sample_rate, uint32_t channels) override;
@@ -36,8 +40,15 @@ public:
 
     void shutdown() override;
 
+    void set_negotiated(uint8_t bitpool, uint8_t mode) {
+        negotiated_bitpool_ = bitpool;
+        negotiated_mode_ = mode;
+    }
+
 private:
-    void *sbc_state_ = nullptr;         /* btstack_sbc_encoder_bluedroid_t* */
+    uint8_t negotiated_bitpool_ = 0;
+    uint8_t negotiated_mode_ = 0;
+    void *sbc_state_ = nullptr;          /* btstack_sbc_encoder_bluedroid_t* */
     const void *sbc_instance_ = nullptr; /* const btstack_sbc_encoder_t* */
     bool initialized_ = false;
     uint16_t mtu_ = 0;

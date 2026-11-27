@@ -54,13 +54,36 @@ std::string log_tail(const std::filesystem::path &path) {
     if (end <= 0) return {};
     input.seekg(end > 4096 ? end - 4096 : 0);
     std::string output{std::istreambuf_iterator<char>(input), {}};
-    // Windows launcher failures can be UTF-16; keep a readable ASCII fallback.
-    if (output.find('\0') != std::string::npos)
-        output.erase(std::remove(output.begin(), output.end(), '\0'), output.end());
+    if (output.find('\0') != std::string::npos) {
+        // wsl.exe sometimes emits UTF-16LE for launcher errors.
+        std::wstring wide;
+        for (size_t i = 0; i + 1 < output.size(); i += 2) {
+            const auto value = static_cast<unsigned char>(output[i]) |
+                               (static_cast<unsigned char>(output[i + 1]) << 8);
+            if (value != 0xfeff && value != 0) wide += static_cast<wchar_t>(value);
+        }
+        const int bytes = WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()),
+                                              nullptr, 0, nullptr, nullptr);
+        if (bytes <= 0) return {};
+        output.resize(bytes);
+        WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()),
+                            output.data(), bytes, nullptr, nullptr);
+    } else {
+        const int len = static_cast<int>(output.size());
+        if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, output.data(), len, nullptr, 0)) {
+            const int chars = MultiByteToWideChar(949, 0, output.data(), len, nullptr, 0);
+            if (chars > 0) {
+                std::wstring wide(chars, L'\0');
+                MultiByteToWideChar(949, 0, output.data(), len, wide.data(), chars);
+                const int bytes = WideCharToMultiByte(CP_UTF8, 0, wide.data(), chars, nullptr, 0, nullptr, nullptr);
+                if (bytes > 0) {
+                    output.resize(bytes);
+                    WideCharToMultiByte(CP_UTF8, 0, wide.data(), chars, output.data(), bytes, nullptr, nullptr);
+                }
+            }
+        }
+    }
     if (output.find_first_not_of(" \r\n\t") == std::string::npos) return {};
-    // Diagnostics are forwarded to UTF-8 GUI strings and logs.
-    for (auto &c : output)
-        if (static_cast<unsigned char>(c) >= 128) c = '?';
     return output;
 }
 
@@ -359,8 +382,20 @@ bool DaemonSscBackend::encode(const int32_t *pcm, size_t frames, size_t channels
 
     /* frame_samples LE + 32-bit interleaved PCM (24-bit, 2^29 scale) */
     uint32_t frame_samples = static_cast<uint32_t>(frames);
-    if (!send_exact(sock_, &frame_samples, sizeof(frame_samples)) ||
-        !send_exact(sock_, pcm, expect_bytes)) return false;
+    WSABUF request[] = {
+        {sizeof(frame_samples), reinterpret_cast<char *>(&frame_samples)},
+        {expect_bytes, reinterpret_cast<char *>(const_cast<int32_t *>(pcm))}};
+    DWORD sent = 0;
+    if (WSASend(sock_, request, 2, &sent, 0, nullptr, nullptr) != 0) return false;
+    if (sent < sizeof(frame_samples)) {
+        if (!send_exact(sock_, reinterpret_cast<char *>(&frame_samples) + sent, sizeof(frame_samples) - sent))
+            return false;
+        sent = sizeof(frame_samples);
+    }
+    const size_t pcm_sent = sent - sizeof(frame_samples);
+    if (pcm_sent < expect_bytes &&
+        !send_exact(sock_, reinterpret_cast<const char *>(pcm) + pcm_sent, expect_bytes - pcm_sent))
+        return false;
     QueryPerformanceCounter(&eq);
 
     int32_t ret = 0;

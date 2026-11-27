@@ -26,6 +26,7 @@ struct ConnectionProfile {
     std::string capture_mode;       /* "loopback", "virtual" */
     std::string audio_device_id;    /* WASAPI device ID for virtual mode */
     std::string audio_device_name;  /* display name */
+    uint32_t audio_buffer_ms = 40;  /* stream pre-roll */
     bool ssc_native = false;        /* runtime selection from WinUI settings */
     bool auto_switch_device = true; /* auto-switch default for Virtual Device mode */
     std::string link_key;           /* 32-hex persistent link key (empty = not stored) */

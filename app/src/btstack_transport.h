@@ -13,6 +13,8 @@
 
 #include "audio_encoder.h"
 #include "a760_firmware.h"
+#include "audio_timing.h"
+#include "audio_codec_config.h"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -59,6 +61,13 @@ public:
     /* Set Realtek USB Product ID for firmware loading (call before init).
      * 0 = non-Realtek adapter (skip Realtek chipset init). */
     void set_a760_experiment(A760Firmware firmware);
+    std::string negotiation_log();
+    bool hci_ready() const {
+        return hci_ready_.load();
+    }
+    bool uses_a760() const {
+        return !a760_firmware_.device_path().empty();
+    }
     const std::string &a760_report() const {
         return a760_report_;
     }
@@ -126,7 +135,21 @@ public:
      * Must be called after connect_a2dp() succeeds.
      * If codec is not supported by remote, returns false.
      */
-    bool configure_codec(AudioCodec codec, uint32_t sample_rate, uint8_t channels);
+    bool configure_codec(AudioCodec codec, uint32_t sample_rate, uint8_t channels,
+                         EncoderQuality quality = EncoderQuality::High);
+    uint32_t compatible_capture_rate(AudioCodec codec, uint32_t preferred) const;
+    uint32_t negotiated_aac_bitrate() const {
+        return aac_bitrate_;
+    }
+    bool negotiated_aac_mpeg2() const {
+        return aac_mpeg2_;
+    }
+    uint8_t negotiated_sbc_bitpool() const {
+        return sbc_bitpool_;
+    }
+    uint8_t negotiated_sbc_mode() const {
+        return sbc_mode_;
+    }
 
     /* Start A2DP streaming. Blocks until AVDTP Start is acknowledged. */
     bool start_stream();
@@ -191,13 +214,20 @@ public:
     bool check_disconnected();
 
     /* Codec support flags discovered from remote device */
+    void set_playout_buffer(uint32_t ms) {
+        playout_buffer_ms_ = ms;
+    }
+    uint64_t playout_stalls() const {
+        return playout_stalls_.load();
+    }
+
     struct RemoteCodecCaps {
         bool sbc = false;
         bool aac = false;
         bool ssc = false;
         /* Remote SEIDs for each codec */
-        uint8_t sbc_seid = 0;
-        uint8_t aac_seid = 0;
+        std::vector<audio_codec_config::SbcCaps> sbc_seps;
+        std::vector<audio_codec_config::AacCaps> aac_seps;
         uint8_t ssc_seid = 0;
         /* Remote SSC codec-specific capability byte (0 = unknown/not reported) */
         uint8_t ssc_cap = 0;
@@ -229,6 +259,9 @@ private:
 
     /* Signal a waiting synchronous call */
     void signal_event(void *event_handle, bool success);
+    void log_negotiation(const char *format, ...);
+    std::mutex negotiation_mutex_;
+    std::string negotiation_log_;
     bool wait_for_event(void *event_handle, uint32_t timeout_ms);
 
     /* Thread handle */
@@ -256,13 +289,18 @@ private:
     std::atomic<bool> start_result_{false};
 
     /* BTstack state */
-    uint16_t a2dp_cid_ = 0;   /* A2DP connection ID */
-    uint16_t avrcp_cid_ = 0;  /* AVRCP connection ID (volume control) */
-    uint8_t local_seid_ = 0;  /* Currently active local SEID */
-    uint8_t remote_seid_ = 0; /* Currently active remote SEID */
+    std::atomic<uint16_t> a2dp_cid_{0}; /* A2DP connection ID */
+    uint16_t avrcp_cid_ = 0;            /* AVRCP connection ID (volume control) */
+    uint8_t local_seid_ = 0;            /* Currently active local SEID */
+    uint8_t remote_seid_ = 0;           /* Currently active remote SEID */
     uint16_t media_mtu_ = 0;
 
     /* Stream endpoint SEIDs */
+    EncoderQuality quality_ = EncoderQuality::High;
+    uint32_t aac_bitrate_ = 0;
+    bool aac_mpeg2_ = false;
+    uint8_t sbc_bitpool_ = 53;
+    uint8_t sbc_mode_ = 4;
     uint8_t sbc_local_seid_ = 0;
     uint8_t aac_local_seid_ = 0;
     uint8_t ssc_local_seid_ = 0;
@@ -335,6 +373,15 @@ private:
     int media_queue_tail_ = 0; /* read position (BTstack thread) */
     std::atomic<int> media_queue_count_{0};
     std::mutex send_mutex_;
+
+    void request_media_when_due();
+    void reset_media_playout();
+    void *media_timer_ = nullptr;
+    bool media_timer_pending_ = false;
+    bool media_can_send_pending_ = false;
+    uint32_t playout_buffer_ms_ = 36;
+    audio_timing::MediaClock media_clock_;
+    std::atomic<uint64_t> playout_stalls_{0};
 
     /* Trigger CAN_SEND_NOW from WASAPI thread without busy-looping.
      * Stored as void* to avoid exposing btstack_context_callback_registration_t. */

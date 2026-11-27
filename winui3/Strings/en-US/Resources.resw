@@ -285,4 +285,28 @@
   <data name="SscTestButton.Content" xml:space="preserve">
     <value>Test SSC encoder before connecting</value>
   </data>
+  <data name="AudioBufferPreset.Header" xml:space="preserve">
+    <value>Playback buffering</value>
+  </data>
+  <data name="AudioBufferLow.Content" xml:space="preserve">
+    <value>Low latency</value>
+  </data>
+  <data name="AudioBufferBalanced.Content" xml:space="preserve">
+    <value>Balanced</value>
+  </data>
+  <data name="AudioBufferStable.Content" xml:space="preserve">
+    <value>Stability</value>
+  </data>
+  <data name="AudioBufferSlider.Header" xml:space="preserve">
+    <value>Buffer (ms)</value>
+  </data>
+  <data name="A760AutoInitCheck.Content" xml:space="preserve">
+    <value>Allow verified A760 RAM initialization at startup</value>
+  </data>
+  <data name="CopyDiagnosticLog.Content" xml:space="preserve">
+    <value>Copy diagnostic log</value>
+  </data>
+  <data name="SaveDiagnosticLog.Content" xml:space="preserve">
+    <value>Save diagnostic log</value>
+  </data>
 </root>

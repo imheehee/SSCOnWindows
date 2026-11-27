@@ -161,8 +161,8 @@ static int service_client(int client_fd, const char *helper_path, int sample_rat
     fprintf(stderr, "sscblobd: helper ready (rate=%d ch=%d br=%d)\n",
             sample_rate, channels, bitrate);
 
-    int32_t *pcm32 = malloc(MAX_FRAME_SAMPLES * MAX_CHANNELS * sizeof(*pcm32));
-    uint8_t *out = malloc(MAX_ENCODE_BYTES);
+    int32_t *pcm32 = malloc(sizeof(uint32_t) + MAX_FRAME_SAMPLES * MAX_CHANNELS * sizeof(*pcm32));
+    uint8_t *out = malloc(sizeof(int32_t) + MAX_ENCODE_BYTES);
     if (!pcm32 || !out) {
         fprintf(stderr, "sscblobd: alloc failed\n");
         goto done;
@@ -183,11 +183,11 @@ static int service_client(int client_fd, const char *helper_path, int sample_rat
         }
         /* int32 PCM (symmetrical to helper): no 16-bit conversion needed */
         size_t pcm32_bytes = (size_t)frame_samples * (size_t)channels * sizeof(int32_t);
-        if (read_full(client_fd, pcm32, pcm32_bytes) < 0)
+        memcpy(pcm32, &frame_samples, sizeof(frame_samples));
+        if (read_full(client_fd, pcm32 + 1, pcm32_bytes) < 0)
             break;
 
-        if (write_full(in_fds[1], &frame_samples, sizeof(frame_samples)) < 0 ||
-            write_full(in_fds[1], pcm32, (size_t)frame_samples * channels * sizeof(int32_t)) < 0) {
+        if (write_full(in_fds[1], pcm32, sizeof(frame_samples) + pcm32_bytes) < 0) {
             fprintf(stderr, "sscblobd: helper pipe write failed\n");
             break;
         }
@@ -199,14 +199,13 @@ static int service_client(int client_fd, const char *helper_path, int sample_rat
         }
         if (ret > (int32_t)MAX_ENCODE_BYTES)
             ret = 0;
-        if (ret > 0 && read_full(out_fds[0], out, (size_t)ret) < 0) {
+        if (ret > 0 && read_full(out_fds[0], out + sizeof(ret), (size_t)ret) < 0) {
             fprintf(stderr, "sscblobd: helper frame read failed\n");
             break;
         }
 
-        if (write_full(client_fd, &ret, sizeof(ret)) < 0)
-            break;
-        if (ret > 0 && write_full(client_fd, out, (size_t)ret) < 0)
+        memcpy(out, &ret, sizeof(ret));
+        if (write_full(client_fd, out, sizeof(ret) + (ret > 0 ? (size_t)ret : 0)) < 0)
             break;
     }
 
@@ -224,7 +223,7 @@ done:
 int main(int argc, char **argv)
 {
     if (argc == 2 && strcmp(argv[1], "--check-managed") == 0) {
-        puts("SSC_CHECK_OK");
+        puts("SSC_CHECK_OK SSC_BATCH_IO");
         return 0;
     }
     if (argc < 5) {
