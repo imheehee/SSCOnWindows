@@ -74,7 +74,7 @@ Codec fallback priority when the requested codec is unavailable: **SSC > AAC > S
 ## Requirements
 
 - **Windows 10/11 (x64)**
-- **Visual Studio 2022 or newer** with the Desktop C++ workload
+- **Visual Studio 2022 or newer** with the Desktop C++ workload (WinUI requires Visual Studio 2026 18.7 or newer)
 - **CMake** 3.16+ (with CMake 4.x, configure with `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` for wxWidgets 3.2.6)
 - **Git** (submodules + wxWidgets FetchContent)
 - A **dedicated USB Bluetooth dongle** (do not reuse the PC's built-in Bluetooth)
@@ -131,9 +131,10 @@ Output: `build_msvc\app\Release\SSCOnWindows-0.2.0.exe`.
 Build the core library first, then the MSBuild project:
 
 ```powershell
+cmake -S . -B build_msvc -G "Visual Studio 18 2026" -A x64 "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
 cmake --build build_msvc --config Release --target a2dpwb_core -j 8
 $msb = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -find "MSBuild\**\Bin\MSBuild.exe"
-& $msb winui3\A2DPWBWinUI.vcxproj -restore -p:Configuration=Release -p:Platform=x64 -p:PlatformToolset=v143 -m:8 -t:Build
+& $msb winui3\A2DPWBWinUI.vcxproj -restore -p:Configuration=Release -p:Platform=x64 -m:8 -t:Build
 ```
 
 Output: `winui3\bin\x64\Release\SSCOnWindows.exe`. The app is **unpackaged**, so the whole output folder (bootstrap DLL, WebView2 DLL, `.xbf`, `.pri`, `.winmd`) must travel with the exe.

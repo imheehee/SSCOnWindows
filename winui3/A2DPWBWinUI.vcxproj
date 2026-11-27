@@ -19,7 +19,7 @@
     <RootNamespace>A2DPWBWinUI</RootNamespace>
     <TargetName>SSCOnWindows</TargetName>
     <DefaultLanguage>en-US</DefaultLanguage>
-    <MinimumVisualStudioVersion>17.0</MinimumVisualStudioVersion>
+    <MinimumVisualStudioVersion>18.7</MinimumVisualStudioVersion>
     <EnableNativePackageReferenceSupport>true</EnableNativePackageReferenceSupport>
     <AppContainerApplication>false</AppContainerApplication>
     <AppxPackage>false</AppxPackage>
@@ -35,7 +35,7 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
     <DesktopCompatible>true</DesktopCompatible>
   </PropertyGroup>
@@ -146,8 +146,6 @@
     <MultiProcMIDL>true</MultiProcMIDL>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
-  <Import Project="$(NuGetPackageRoot)microsoft.windowsappsdk.winui\1.8.260803003\buildTransitive\Microsoft.UI.Xaml.Markup.Compiler.interop.targets" Condition="Exists('$(NuGetPackageRoot)microsoft.windowsappsdk.winui\1.8.260803003\buildTransitive\Microsoft.UI.Xaml.Markup.Compiler.interop.targets')" />
-  <Import Project="$(NuGetPackageRoot)microsoft.windowsappsdk.winui\1.8.260803003\buildTransitive\native\Microsoft.WinUI.References.targets" Condition="Exists('$(NuGetPackageRoot)microsoft.windowsappsdk.winui\1.8.260803003\buildTransitive\native\Microsoft.WinUI.References.targets')" />
   <ItemGroup>
     <PackageReference Include="Microsoft.Windows.CppWinRT" Version="3.0.260818.1" />
     <PackageReference Include="Microsoft.Windows.ImplementationLibrary" Version="1.0.260126.7" />

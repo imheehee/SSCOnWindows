@@ -37,12 +37,13 @@ The first build takes several minutes because CMake FetchContent downloads and c
 
 ## WinUI 3 GUI
 
-Build the core library first, then the MSBuild project:
+Use Visual Studio 2026 18.7 or later for native NuGet package restore. Configure the CMake build with the same Visual Studio installation, then build the core and WinUI projects.
 
 ```powershell
+cmake -S . -B build_msvc -G "Visual Studio 18 2026" -A x64 "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
 cmake --build build_msvc --config Release --target a2dpwb_core -j 8
 $msb = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -find "MSBuild\**\Bin\MSBuild.exe"
-& $msb winui3\A2DPWBWinUI.vcxproj -restore -p:Configuration=Release -p:Platform=x64 -p:PlatformToolset=v143 -m:8 -t:Build
+& $msb winui3\A2DPWBWinUI.vcxproj -restore -p:Configuration=Release -p:Platform=x64 -m:8 -t:Build
 ```
 
 Output: `winui3\bin\x64\Release\SSCOnWindows.exe`. The app is **unpackaged**, so the
