@@ -76,7 +76,7 @@ DongleDriverStatus detect_dongle_driver(uint16_t vid, uint16_t pid) {
             if (n == 0) break;
             if (hwid_matches(s, vid, pid)) {
                 matched = true;
-                const char* revision = std::strstr(s, "&REV_");
+                const char *revision = std::strstr(s, "&REV_");
                 if (revision && std::strlen(revision + 5) >= 4) {
                     unsigned value = 0;
                     if (sscanf_s(revision + 5, "%4x", &value) == 1)

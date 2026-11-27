@@ -60,12 +60,12 @@ static std::atomic<AudioEncoder *> g_encoder{nullptr};
 static AudioCodec g_active_codec = AudioCodec::SSC;
 static uint32_t g_timestamp = 0;
 static uint32_t g_active_channels = 2;
-static uint32_t g_encoder_sample_bytes = 2; /* 2 for int16, 4 for int32 */
+static uint32_t g_encoder_sample_bytes = 2;     /* 2 for int16, 4 for int32 */
 static double g_pcm_int32_scale = 2147483647.0; /* int32 scale (SSC daemon expects 2^29) */
-static uint32_t g_encode_sample_rate = 0; /* 0 = same as capture; 96000 = SSC UHQ */
-static bool g_ssc_native_daemon = false; /* --ssc-native: Windows Qiling daemon */
-static bool g_hci_dump = false;          /* --hci-dump: BTstack packet dump to stdout (debug) */
-static uint32_t g_ssc_bitrate_kbps = 0;  /* --bitrate: explicit SSC kbps (0 = auto) */
+static uint32_t g_encode_sample_rate = 0;       /* 0 = same as capture; 96000 = SSC UHQ */
+static bool g_ssc_native_daemon = false;        /* --ssc-native: Windows Qiling daemon */
+static bool g_hci_dump = false;                 /* --hci-dump: BTstack packet dump to stdout (debug) */
+static uint32_t g_ssc_bitrate_kbps = 0;         /* --bitrate: explicit SSC kbps (0 = auto) */
 
 /* BTstack transport */
 static std::atomic<BtStackTransport *> g_transport{nullptr};
@@ -119,8 +119,7 @@ static float compute_rms_sum_i16(const int16_t *s, uint32_t n) {
 
 static void audio_callback(
     const uint8_t *data, uint32_t frames,
-    uint32_t channels, uint32_t sample_rate, uint32_t bits_per_sample)
-{
+    uint32_t channels, uint32_t sample_rate, uint32_t bits_per_sample) {
     (void)sample_rate;
 
     /* Health metric: report capture level every 2s */
@@ -135,8 +134,8 @@ static void audio_callback(
         if (now_ms - g_last_cb_log >= 2000) {
             g_last_cb_log = now_ms;
             double rms_avg = g_cb_samples_total
-                ? (static_cast<double>(g_cb_rms_total) / 65536.0) / g_cb_samples_total
-                : 0.0;
+                                 ? (static_cast<double>(g_cb_rms_total) / 65536.0) / g_cb_samples_total
+                                 : 0.0;
             double db = (rms_avg > 0.0) ? (10.0 * log10(rms_avg)) : -200.0;
             /* Compute arrival rate (frames/sec) since last sample */
             static uint64_t last_frames = 0;
@@ -151,7 +150,10 @@ static void audio_callback(
             last_tick = now_ms;
             uint32_t qd = 0, sf = 0;
             BtStackTransport *t = g_transport.load();
-            if (t) { qd = t->get_queue_depth(); sf = t->get_and_reset_send_failure_count(); }
+            if (t) {
+                qd = t->get_queue_depth();
+                sf = t->get_and_reset_send_failure_count();
+            }
             cstyle::fprint(stderr, cstyle::Tag::Data, "CAP:     ");
             fprintf(stderr, "frames=%llu rate=",
                     (unsigned long long)g_cb_samples_total);
@@ -161,11 +163,15 @@ static void audio_callback(
                 fprintf(stderr, "%.0ffs", rate);
             fprintf(stderr, " bytes=%llu rms_avg=%.6f db=%.1f queue=",
                     (unsigned long long)g_cb_bytes_total, rms_avg, db);
-            if (qd > 0) cstyle::fprint(stderr, cstyle::Tag::Warn, "%u", qd);
-            else fprintf(stderr, "%u", qd);
+            if (qd > 0)
+                cstyle::fprint(stderr, cstyle::Tag::Warn, "%u", qd);
+            else
+                fprintf(stderr, "%u", qd);
             fprintf(stderr, " fail=");
-            if (sf > 0) cstyle::fprint(stderr, cstyle::Tag::Error, "%u", sf);
-            else fprintf(stderr, "%u", sf);
+            if (sf > 0)
+                cstyle::fprint(stderr, cstyle::Tag::Error, "%u", sf);
+            else
+                fprintf(stderr, "%u", sf);
             fprintf(stderr, "\n");
             /* Per-window STATS: effective bitrate + average encode latency */
             {
@@ -173,10 +179,11 @@ static void audio_callback(
                 static uint32_t s_last_calls = 0;
                 double dt_stats = 2.0; /* window is 2000 ms */
                 double kbps = (g_enc_bytes_total >= s_last_bytes)
-                    ? (double)(g_enc_bytes_total - s_last_bytes) * 8.0 / 1000.0 / dt_stats : 0.0;
+                                  ? (double)(g_enc_bytes_total - s_last_bytes) * 8.0 / 1000.0 / dt_stats
+                                  : 0.0;
                 double enc_avg_ms = (g_enc_calls > s_last_calls)
-                    ? (double)(g_enc_us_total - s_last_us) / 1000.0 / (double)(g_enc_calls - s_last_calls)
-                    : 0.0;
+                                        ? (double)(g_enc_us_total - s_last_us) / 1000.0 / (double)(g_enc_calls - s_last_calls)
+                                        : 0.0;
                 s_last_bytes = g_enc_bytes_total;
                 s_last_us = g_enc_us_total;
                 s_last_calls = g_enc_calls;
@@ -225,17 +232,15 @@ static void audio_callback(
             for (uint32_t f = 0; f < frames; f++) {
                 const float *ch = float_src + f * channels;
                 float fl = ch[0], fr = ch[1];
-                float fc  = (channels > 2) ? ch[2] : 0.0f;
+                float fc = (channels > 2) ? ch[2] : 0.0f;
                 float lfe = (channels > 3) ? ch[3] : 0.0f;
-                float bl  = (channels > 4) ? ch[4] : 0.0f;
-                float br  = (channels > 5) ? ch[5] : 0.0f;
-                float sl  = (channels > 6) ? ch[6] : 0.0f;
-                float sr  = (channels > 7) ? ch[7] : 0.0f;
+                float bl = (channels > 4) ? ch[4] : 0.0f;
+                float br = (channels > 5) ? ch[5] : 0.0f;
+                float sl = (channels > 6) ? ch[6] : 0.0f;
+                float sr = (channels > 7) ? ch[7] : 0.0f;
                 /* ITU-R BS.775 stereo downmix + LFE at -6dB */
-                float_stereo[f * 2 + 0] = fl + 0.707107f * fc
-                    + 0.707107f * (bl + sl) + 0.5f * lfe;
-                float_stereo[f * 2 + 1] = fr + 0.707107f * fc
-                    + 0.707107f * (br + sr) + 0.5f * lfe;
+                float_stereo[f * 2 + 0] = fl + 0.707107f * fc + 0.707107f * (bl + sl) + 0.5f * lfe;
+                float_stereo[f * 2 + 1] = fr + 0.707107f * fc + 0.707107f * (br + sr) + 0.5f * lfe;
             }
             float_src = float_stereo.data();
         } else if (need_downmix) {
@@ -254,7 +259,7 @@ static void audio_callback(
             uint32_t src_cap = frames * 8; /* 2x frames × 2ch × 4B */
             if (src_float.size() < src_cap) src_float.resize(src_cap);
             uint32_t out_frames = upsample_2x_stereo_f32(float_src, frames,
-                                                        src_float.data(), frames * 2);
+                                                         src_float.data(), frames * 2);
             frames = out_frames;
             float_src = src_float.data();
         }
@@ -289,16 +294,18 @@ static void audio_callback(
                     const int16_t *ch = src + f * channels;
                     int64_t fl = static_cast<int32_t>(ch[0]) << 16;
                     int64_t fr = static_cast<int32_t>(ch[1]) << 16;
-                    int64_t fc  = (channels > 2) ? (static_cast<int32_t>(ch[2]) << 16) : 0;
+                    int64_t fc = (channels > 2) ? (static_cast<int32_t>(ch[2]) << 16) : 0;
                     int64_t lfe = (channels > 3) ? (static_cast<int32_t>(ch[3]) << 16) : 0;
-                    int64_t bl  = (channels > 4) ? (static_cast<int32_t>(ch[4]) << 16) : 0;
-                    int64_t br  = (channels > 5) ? (static_cast<int32_t>(ch[5]) << 16) : 0;
-                    int64_t sl  = (channels > 6) ? (static_cast<int32_t>(ch[6]) << 16) : 0;
-                    int64_t sr  = (channels > 7) ? (static_cast<int32_t>(ch[7]) << 16) : 0;
-                    int64_t l = fl + fc*707/1000 + (bl+sl)*707/1000 + lfe*500/1000;
-                    int64_t r = fr + fc*707/1000 + (br+sr)*707/1000 + lfe*500/1000;
-                    if (l > INT32_MAX) l = INT32_MAX; if (l < INT32_MIN) l = INT32_MIN;
-                    if (r > INT32_MAX) r = INT32_MAX; if (r < INT32_MIN) r = INT32_MIN;
+                    int64_t bl = (channels > 4) ? (static_cast<int32_t>(ch[4]) << 16) : 0;
+                    int64_t br = (channels > 5) ? (static_cast<int32_t>(ch[5]) << 16) : 0;
+                    int64_t sl = (channels > 6) ? (static_cast<int32_t>(ch[6]) << 16) : 0;
+                    int64_t sr = (channels > 7) ? (static_cast<int32_t>(ch[7]) << 16) : 0;
+                    int64_t l = fl + fc * 707 / 1000 + (bl + sl) * 707 / 1000 + lfe * 500 / 1000;
+                    int64_t r = fr + fc * 707 / 1000 + (br + sr) * 707 / 1000 + lfe * 500 / 1000;
+                    if (l > INT32_MAX) l = INT32_MAX;
+                    if (l < INT32_MIN) l = INT32_MIN;
+                    if (r > INT32_MAX) r = INT32_MAX;
+                    if (r < INT32_MIN) r = INT32_MIN;
                     dst[f * 2 + 0] = static_cast<int32_t>(l);
                     dst[f * 2 + 1] = static_cast<int32_t>(r);
                 }
@@ -307,16 +314,18 @@ static void audio_callback(
                 for (uint32_t f = 0; f < frames; f++) {
                     const int16_t *ch = src + f * channels;
                     int32_t fl = ch[0], fr = ch[1];
-                    int32_t fc  = (channels > 2) ? ch[2] : 0;
+                    int32_t fc = (channels > 2) ? ch[2] : 0;
                     int32_t lfe = (channels > 3) ? ch[3] : 0;
-                    int32_t bl  = (channels > 4) ? ch[4] : 0;
-                    int32_t br  = (channels > 5) ? ch[5] : 0;
-                    int32_t sl  = (channels > 6) ? ch[6] : 0;
-                    int32_t sr  = (channels > 7) ? ch[7] : 0;
-                    int32_t l = fl + fc*707/1000 + (bl+sl)*707/1000 + lfe*500/1000;
-                    int32_t r = fr + fc*707/1000 + (br+sr)*707/1000 + lfe*500/1000;
-                    if (l > 32767) l = 32767; if (l < -32768) l = -32768;
-                    if (r > 32767) r = 32767; if (r < -32768) r = -32768;
+                    int32_t bl = (channels > 4) ? ch[4] : 0;
+                    int32_t br = (channels > 5) ? ch[5] : 0;
+                    int32_t sl = (channels > 6) ? ch[6] : 0;
+                    int32_t sr = (channels > 7) ? ch[7] : 0;
+                    int32_t l = fl + fc * 707 / 1000 + (bl + sl) * 707 / 1000 + lfe * 500 / 1000;
+                    int32_t r = fr + fc * 707 / 1000 + (br + sr) * 707 / 1000 + lfe * 500 / 1000;
+                    if (l > 32767) l = 32767;
+                    if (l < -32768) l = -32768;
+                    if (r > 32767) r = 32767;
+                    if (r < -32768) r = -32768;
                     dst[f * 2 + 0] = static_cast<int16_t>(l);
                     dst[f * 2 + 1] = static_cast<int16_t>(r);
                 }
@@ -388,8 +397,7 @@ static void audio_callback(
         QueryPerformanceCounter(&e0);
         bool ok = encoder->encode(
             pcm_data + offset, bytes_per_encode,
-            g_encode_buffer.data(), &out_size, &out_frames
-        );
+            g_encode_buffer.data(), &out_size, &out_frames);
         QueryPerformanceCounter(&e1);
         if (ok && out_size > 0) {
             g_enc_calls++;
@@ -444,12 +452,13 @@ static void audio_callback(
         last_cb_diag = cb_now;
         cstyle::fprint(stderr, cstyle::Tag::Data, "CB:      ");
         fprintf(stderr, "last-call=");
-        if (cb_ms > 15.0) cstyle::fprint(stderr, cstyle::Tag::Warn, "%.2fms", cb_ms);
-        else fprintf(stderr, "%.2fms", cb_ms);
+        if (cb_ms > 15.0)
+            cstyle::fprint(stderr, cstyle::Tag::Warn, "%.2fms", cb_ms);
+        else
+            fprintf(stderr, "%.2fms", cb_ms);
         fprintf(stderr, " max=%.2fms frames=%u\n", max_cb_ms, frames);
         max_cb_ms = 0;
     }
-
 }
 
 /* Console Ctrl+C handler */
@@ -500,9 +509,12 @@ static EncoderQuality parse_quality(const char *mode) {
 
 static const char *codec_name_str(AudioCodec codec) {
     switch (codec) {
-    case AudioCodec::SBC: return "SBC";
-    case AudioCodec::AAC: return "AAC";
-    case AudioCodec::SSC: return "SSC";
+    case AudioCodec::SBC:
+        return "SBC";
+    case AudioCodec::AAC:
+        return "AAC";
+    case AudioCodec::SSC:
+        return "SSC";
     }
     return "Unknown";
 }
@@ -513,9 +525,9 @@ static const char *codec_name_str(AudioCodec codec) {
  * Returns true if a compatible codec was found.
  */
 static bool find_best_btstack_codec(const BtStackTransport::RemoteCodecCaps &caps,
-                                     AudioCodec requested_codec,
-                                     AudioCodec *selected_codec) {
-    codec_policy::Caps cc{ caps.sbc, caps.aac, caps.ssc, caps.ssc_cap, caps.ssc_uhq };
+                                    AudioCodec requested_codec,
+                                    AudioCodec *selected_codec) {
+    codec_policy::Caps cc{caps.sbc, caps.aac, caps.ssc, caps.ssc_cap, caps.ssc_uhq};
     if (!codec_policy::resolve_codec(requested_codec, cc, selected_codec)) return false;
     if (*selected_codec != requested_codec) {
         printf("Requested codec %s not available, falling back to %s...\n",
@@ -529,13 +541,13 @@ static bool find_best_btstack_codec(const BtStackTransport::RemoteCodecCaps &cap
 /* ======================================================================== */
 
 static int run_streaming(const uint8_t target_addr[6],
-                             const char *usb_path,
-                             AudioCodec requested_codec,
-                             EncoderQuality quality,
-                             CaptureMode capture_mode = CaptureMode::SystemLoopback,
-                             const wchar_t *audio_device_id = nullptr,
-                             bool mute_output = true,
-                             bool uhq = false) {
+                         const char *usb_path,
+                         AudioCodec requested_codec,
+                         EncoderQuality quality,
+                         CaptureMode capture_mode = CaptureMode::SystemLoopback,
+                         const wchar_t *audio_device_id = nullptr,
+                         bool mute_output = true,
+                         bool uhq = false) {
     BtStackTransport transport;
     transport.set_link_key_dir(get_config_dir());
     transport.set_firmware_dir(get_config_dir());
@@ -558,9 +570,9 @@ static int run_streaming(const uint8_t target_addr[6],
                    "\n[2/5] Initializing BTstack (WinUSB transport)...\n");
     if (!transport.init(usb_path)) {
         cstyle::fprint(stderr, cstyle::Tag::Error,
-            "Failed to initialize BTstack.\n"
-            "Ensure a USB Bluetooth adapter is connected and its driver\n"
-            "has been replaced with WinUSB using Zadig.\n");
+                       "Failed to initialize BTstack.\n"
+                       "Ensure a USB Bluetooth adapter is connected and its driver\n"
+                       "has been replaced with WinUSB using Zadig.\n");
         return 1;
     }
 
@@ -574,13 +586,13 @@ static int run_streaming(const uint8_t target_addr[6],
     printf("(This may take up to 30 seconds if the device is slow to respond.)\n");
     if (!transport.connect_a2dp(target_addr)) {
         cstyle::fprint(stderr, cstyle::Tag::Error,
-            "Failed to connect to Bluetooth device.\n"
-            "Troubleshooting:\n"
-            "  - Ensure the headphones are in PAIRING mode (not just powered on)\n"
-            "    (Typically hold the power button until the LED blinks rapidly)\n"
-            "  - Ensure no other device is currently connected to the headphones\n"
-            "  - Ensure the headphones are within range of the USB adapter\n"
-            "  - Try running again -- the first attempt after entering pairing mode may fail\n");
+                       "Failed to connect to Bluetooth device.\n"
+                       "Troubleshooting:\n"
+                       "  - Ensure the headphones are in PAIRING mode (not just powered on)\n"
+                       "    (Typically hold the power button until the LED blinks rapidly)\n"
+                       "  - Ensure no other device is currently connected to the headphones\n"
+                       "  - Ensure the headphones are within range of the USB adapter\n"
+                       "  - Try running again -- the first attempt after entering pairing mode may fail\n");
         transport.shutdown();
         return 1;
     }
@@ -588,10 +600,10 @@ static int run_streaming(const uint8_t target_addr[6],
     /* Select codec */
     AudioCodec selected_codec;
     if (!find_best_btstack_codec(transport.get_remote_caps(),
-                                  requested_codec, &selected_codec)) {
+                                 requested_codec, &selected_codec)) {
         cstyle::fprint(stderr, cstyle::Tag::Error,
-            "No compatible codec found on device.\n"
-            "Device must support SSC, AAC, or SBC.\n");
+                       "No compatible codec found on device.\n"
+                       "Device must support SSC, AAC, or SBC.\n");
         transport.disconnect();
         transport.shutdown();
         return 1;
@@ -655,15 +667,15 @@ static int run_streaming(const uint8_t target_addr[6],
     uint32_t encode_sr = sample_rate;
     if (selected_codec == AudioCodec::SSC && sample_rate == 48000 && uhq) {
         const auto &rc = transport.get_remote_caps();
-        codec_policy::Caps cc{ rc.sbc, rc.aac, rc.ssc, rc.ssc_cap, rc.ssc_uhq };
+        codec_policy::Caps cc{rc.sbc, rc.aac, rc.ssc, rc.ssc_cap, rc.ssc_uhq};
         bool fell_back = false;
         encode_sr = codec_policy::resolve_encode_sr(selected_codec, sample_rate,
                                                     96000, cc, &fell_back);
         if (fell_back) {
             cstyle::fprint(stderr, cstyle::Tag::Warn,
-                    "\n*** SSC UHQ unavailable: remote SSC cap=0x%02X has no UHQ(0x02) bit. ***\n"
-                    "*** Falling back to 48 kHz SSC — device does not decode 96 kHz. ***\n",
-                    rc.ssc_cap);
+                           "\n*** SSC UHQ unavailable: remote SSC cap=0x%02X has no UHQ(0x02) bit. ***\n"
+                           "*** Falling back to 48 kHz SSC — device does not decode 96 kHz. ***\n",
+                           rc.ssc_cap);
         } else {
             cstyle::fprint(stderr, cstyle::Tag::Data,
                            "\n*** SSC UHQ: encode at 96 kHz (WASAPI capture 48 kHz, 2x SRC) ***\n");
@@ -678,7 +690,7 @@ static int run_streaming(const uint8_t target_addr[6],
 
     /* Configure stream — use encode_sr for the remote side */
     if (!transport.configure_codec(selected_codec, encode_sr,
-                                    static_cast<uint8_t>(g_active_channels))) {
+                                   static_cast<uint8_t>(g_active_channels))) {
         cstyle::fprint(stderr, cstyle::Tag::Error, "Failed to configure %s stream\n",
                        codec_name_str(selected_codec));
         transport.disconnect();
@@ -692,9 +704,13 @@ static int run_streaming(const uint8_t target_addr[6],
     if (media_mtu == 0) media_mtu = 679;
 
     switch (selected_codec) {
-    case AudioCodec::SBC:    encoder = std::make_unique<SbcEncoder>(); break;
+    case AudioCodec::SBC:
+        encoder = std::make_unique<SbcEncoder>();
+        break;
 #ifdef AAC_ENCODER_AVAILABLE
-    case AudioCodec::AAC:    encoder = std::make_unique<AacEncoder>(); break;
+    case AudioCodec::AAC:
+        encoder = std::make_unique<AacEncoder>();
+        break;
 #else
     case AudioCodec::AAC:
         cstyle::fprint(stderr, cstyle::Tag::Error,
@@ -823,8 +839,8 @@ static int run_streaming(const uint8_t target_addr[6],
 
             if (!reconnected) {
                 cstyle::fprint(stderr, cstyle::Tag::Error,
-                        "Failed to reconnect after %d attempts. Exiting.\n",
-                        MAX_RECONNECT_ATTEMPTS);
+                               "Failed to reconnect after %d attempts. Exiting.\n",
+                               MAX_RECONNECT_ATTEMPTS);
                 break;
             }
 
@@ -892,7 +908,7 @@ int main(int argc, char *argv[]) {
        wxWidgets/OLE message dispatching; CLI mode uses MTA for WASAPI.
        Worker threads initialize their own COM apartments independently. */
     HRESULT hr = CoInitializeEx(nullptr,
-        cli_mode ? COINIT_MULTITHREADED : COINIT_APARTMENTTHREADED);
+                                cli_mode ? COINIT_MULTITHREADED : COINIT_APARTMENTTHREADED);
     if (FAILED(hr) && hr != RPC_E_CHANGED_MODE) {
         fprintf(stderr, "Failed to initialize COM: 0x%08lx\n", hr);
         return 1;
@@ -951,7 +967,7 @@ int main(int argc, char *argv[]) {
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--cli") == 0) {
-            continue;  /* Already handled */
+            continue; /* Already handled */
         } else if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) {
             i++;
             if (_stricmp(argv[i], "sbc") == 0) {
@@ -998,7 +1014,7 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--bitrate") == 0 && i + 1 < argc) {
             g_ssc_bitrate_kbps = static_cast<uint32_t>(atoi(argv[++i]));
         } else if (strcmp(argv[i], "--no-color") == 0) {
-            continue;  /* handled in the pre-scan above */
+            continue; /* handled in the pre-scan above */
         } else if (strcmp(argv[i], "--hci-dump") == 0) {
             g_hci_dump = true;
         } else if (strcmp(argv[i], "-h") == 0) {
@@ -1038,9 +1054,9 @@ int main(int argc, char *argv[]) {
         }
         if (device_addr_str[0] == '\0') {
             fprintf(stderr,
-                "No Bluetooth audio device found.\n"
-                "Use -d XX:XX:XX:XX:XX:XX to specify the device address.\n"
-                "(Find the address in Windows Settings > Bluetooth before switching to WinUSB)\n");
+                    "No Bluetooth audio device found.\n"
+                    "Use -d XX:XX:XX:XX:XX:XX to specify the device address.\n"
+                    "(Find the address in Windows Settings > Bluetooth before switching to WinUSB)\n");
             CoUninitialize();
             return 1;
         }

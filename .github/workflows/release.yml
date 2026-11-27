@@ -44,7 +44,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $dist = 'dist\SSCOnWindows-0.2.0'
-          New-Item -ItemType Directory -Force -Path "$dist\wx", "$dist\winui" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$dist\wx", "$dist\winui", "$dist\docs\ko" | Out-Null
           Copy-Item 'build_msvc\app\Release\SSCOnWindows-0.2.0.exe' "$dist\wx"
           Copy-Item 'winui3\bin\x64\Release\*' "$dist\winui" -Recurse
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -53,7 +53,7 @@ jobs:
           $redistVersion = (Get-Content "$vs\VC\Auxiliary\Build\Microsoft.VCRedistVersion.default.txt" -Raw).Trim()
           $crt = @(Get-ChildItem "$vs\VC\Redist\MSVC\$redistVersion\x64\Microsoft.VC*.CRT\*.dll" -File)
           if (!$crt.Count) { throw 'Visual C++ x64 app-local CRT DLLs are missing.' }
-          foreach ($dir in "$dist\wx", "$dist\winui") {
+          foreach ($dir in "$dist\wx", "$dist\winui", "$dist\docs\ko") {
             $crt | Copy-Item -Destination $dir -Force
           }
           foreach ($file in 'SSCOnWindows.exe', 'Microsoft.UI.Xaml.dll', 'resources.pri') {
@@ -61,8 +61,9 @@ jobs:
           }
           Get-ChildItem "$dist\winui" -Recurse -File -Include *.pdb,*.lib,*.exp |
             Remove-Item -Force
-          Copy-Item README.md, LICENSE, THIRD_PARTY_LICENSES.md, docs/compatibility.md $dist
-          Copy-Item docs/ko/setup.md "$dist\setup-ko.md"
+          Copy-Item README.md, LICENSE, THIRD_PARTY_LICENSES.md $dist
+          Copy-Item docs/setup.md, docs/compatibility.md "$dist\docs"
+          Copy-Item docs/ko/setup.md "$dist\docs\ko"
           Compress-Archive -Path "$dist\*" -DestinationPath "dist\SSCOnWindows-0.2.0.zip" -Force
           Get-FileHash "dist\SSCOnWindows-0.2.0.zip" -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash)  $([IO.Path]::GetFileName($_.Path))" } |
@@ -127,4 +128,4 @@ jobs:
           gh release create "$env:RELEASE_TAG" "dist/SSCOnWindows-0.2.0.zip" "dist/SSCOnWindows-0.2.0.zip.sha256" `
             --repo "$env:GITHUB_REPOSITORY" --draft `
             --title "SSC On Windows $env:RELEASE_TAG" `
-            --notes "Windows x64 binaries and runtime dependencies. See compatibility.md for firmware and driver setup."
+            --notes "Windows x64 binaries and runtime dependencies. See docs/compatibility.md for firmware and driver setup."

@@ -22,7 +22,8 @@ namespace
 {
     bool IsKorean()
     {
-        return PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_KOREAN;
+        static const bool korean = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_KOREAN;
+        return korean;
     }
 
     const char* UiText(const char* english, const char* korean)
@@ -906,7 +907,7 @@ namespace winrt::A2DPWBWinUI::implementation
                                          L"목록에서 헤드셋과 코덱을 선택하고 ‘연결’을 누르세요."));
             stack.Children().Append(heading(L"Windows Bluetooth 복원"));
             stack.Children().Append(para(L"스트리밍을 중지하고 문제 해결 메뉴에서 ‘Windows Bluetooth 복원 안내’를 여세요. "
-                                         L"자세한 절차는 배포 ZIP의 setup-ko.md를 참조하세요."));
+                                         L"자세한 절차는 배포 ZIP의 docs/ko/setup.md를 참조하세요."));
         } else {
             stack.Children().Append(heading(L"How streaming works"));
             stack.Children().Append(para(L"SSC On Windows streams Windows audio over a USB Bluetooth dongle "
@@ -952,9 +953,10 @@ namespace winrt::A2DPWBWinUI::implementation
 
         const auto adapter = FindRtl8761Adapter();
         const auto report = adapter
-            ? get_dongle_driver_instructions(adapter->vid, adapter->pid, enable_winusb)
+            ? get_dongle_driver_instructions(adapter->vid, adapter->pid, enable_winusb, IsKorean())
             : DongleSwitchReport{DongleSwitchResult::NotPresent,
-                  "Connect one supported RTL8761BU adapter to identify the device. For other models, check the hardware ID and driver in Device Manager."};
+                  UiText("Connect one supported RTL8761BU adapter to identify the device. For other models, check the hardware ID and driver in Device Manager.",
+                         "지원되는 RTL8761BU 동글 한 대를 연결하세요. 다른 모델은 장치 관리자에서 하드웨어 ID와 드라이버를 확인하세요.")};
 
         ContentDialog dialog;
         dialog.Title(box_value(enable_winusb ? UiText(L"WinUSB Setup", L"WinUSB 설정") : UiText(L"Windows Bluetooth Restore", L"Windows Bluetooth 복원")));

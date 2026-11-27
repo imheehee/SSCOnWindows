@@ -14,7 +14,7 @@
 #include <windows.h>
 #include <setupapi.h>
 #include <winusb.h>
-#include <usbiodef.h>   /* GUID_DEVINTERFACE_USB_DEVICE */
+#include <usbiodef.h> /* GUID_DEVINTERFACE_USB_DEVICE */
 
 #include <algorithm>
 #include <cctype>
@@ -23,10 +23,10 @@
 
 /* BTstack Realtek chipset API (C linkage) */
 extern "C" {
-    uint16_t btstack_chipset_realtek_get_num_usb_controllers(void);
-    void btstack_chipset_realtek_get_vendor_product_id(uint16_t index,
-                                                       uint16_t *out_vendor_id,
-                                                       uint16_t *out_product_id);
+uint16_t btstack_chipset_realtek_get_num_usb_controllers(void);
+void btstack_chipset_realtek_get_vendor_product_id(uint16_t index,
+                                                   uint16_t *out_vendor_id,
+                                                   uint16_t *out_product_id);
 }
 
 /* ======================================================================== */
@@ -36,24 +36,23 @@ extern "C" {
 /* Only lists one PID per chip family (the most common one).                 */
 /* ======================================================================== */
 
-static const std::vector<RealtekChipInfo> &chip_db()
-{
+static const std::vector<RealtekChipInfo> &chip_db() {
     static const std::vector<RealtekChipInfo> db = {
         /* Chips with firmware available in linux-firmware (kernel.org) */
-        { 0x8771, "RTL8761BU",  "rtl8761bu_fw",  "rtl8761bu_config"  },
-        { 0x876C, "RTL8761CU",  "rtl8761cu_fw",  "rtl8761cu_config"  },
-        { 0xB82C, "RTL8822BU",  "rtl8822bu_fw",  "rtl8822bu_config"  },
-        { 0xC821, "RTL8821CU",  "rtl8821cu_fw",  "rtl8821cu_config"  },
-        { 0xC82C, "RTL8822CU",  "rtl8822cu_fw",  "rtl8822cu_config"  },
-        { 0xD723, "RTL8723DU",  "rtl8723du_fw",  "rtl8723du_config"  },
-        { 0xC852, "RTL8852AU",  "rtl8852au_fw",  "rtl8852au_config"  },
-        { 0xB85B, "RTL8852BU",  "rtl8852bu_fw",  "rtl8852bu_config"  },
-        { 0xB85D, "RTL8852BTU", "rtl8852btu_fw", "rtl8852btu_config" },
-        { 0xC85A, "RTL8852CU",  "rtl8852cu_fw",  "rtl8852cu_config"  },
-        { 0xB083, "RTL8851BU",  "rtl8851bu_fw",  "rtl8851bu_config"  },
-        { 0x922A, "RTL8922AU",  "rtl8922au_fw",  "rtl8922au_config"  },
+        {0x8771, "RTL8761BU", "rtl8761bu_fw", "rtl8761bu_config"},
+        {0x876C, "RTL8761CU", "rtl8761cu_fw", "rtl8761cu_config"},
+        {0xB82C, "RTL8822BU", "rtl8822bu_fw", "rtl8822bu_config"},
+        {0xC821, "RTL8821CU", "rtl8821cu_fw", "rtl8821cu_config"},
+        {0xC82C, "RTL8822CU", "rtl8822cu_fw", "rtl8822cu_config"},
+        {0xD723, "RTL8723DU", "rtl8723du_fw", "rtl8723du_config"},
+        {0xC852, "RTL8852AU", "rtl8852au_fw", "rtl8852au_config"},
+        {0xB85B, "RTL8852BU", "rtl8852bu_fw", "rtl8852bu_config"},
+        {0xB85D, "RTL8852BTU", "rtl8852btu_fw", "rtl8852btu_config"},
+        {0xC85A, "RTL8852CU", "rtl8852cu_fw", "rtl8852cu_config"},
+        {0xB083, "RTL8851BU", "rtl8851bu_fw", "rtl8851bu_config"},
+        {0x922A, "RTL8922AU", "rtl8922au_fw", "rtl8922au_config"},
         /* User-supplied firmware */
-        { CUSTOM_CHIP_PID, "Custom", "custom_fw", "custom_config"     },
+        {CUSTOM_CHIP_PID, "Custom", "custom_fw", "custom_config"},
     };
     return db;
 }
@@ -83,15 +82,14 @@ static const std::vector<RealtekChipInfo> &chip_db()
  */
 static const OemChipMapping oem_table[] = {
     /* VID      PID     CHIP           Product                  */
-    { 0x2357, 0x0604, 0x8771 },  /* TP-Link UB500             */
+    {0x2357, 0x0604, 0x8771}, /* TP-Link UB500             */
     /* --- add verified OEM adapters above this line --- */
-    { 0, 0, 0 },                 /* sentinel (do not remove)   */
+    {0, 0, 0}, /* sentinel (do not remove)   */
 };
 
 /* Lookup helpers */
 
-static const RealtekChipInfo *find_chip_info(uint16_t pid)
-{
+static const RealtekChipInfo *find_chip_info(uint16_t pid) {
     for (const auto &c : chip_db()) {
         if (c.pid == pid) return &c;
     }
@@ -99,8 +97,7 @@ static const RealtekChipInfo *find_chip_info(uint16_t pid)
 }
 
 /* Check if PID is in BTstack's Realtek firmware table (all entries use VID=0x0BDA). */
-static bool is_in_btstack_table(uint16_t pid)
-{
+static bool is_in_btstack_table(uint16_t pid) {
     uint16_t count = btstack_chipset_realtek_get_num_usb_controllers();
     for (uint16_t i = 0; i < count; i++) {
         uint16_t tv, tp;
@@ -112,8 +109,7 @@ static bool is_in_btstack_table(uint16_t pid)
 
 /* Resolve any VID:PID to a Realtek firmware PID.
  * Returns 0 if the adapter is not a known Realtek-based device. */
-static uint16_t resolve_realtek_pid(uint16_t vid, uint16_t pid)
-{
+static uint16_t resolve_realtek_pid(uint16_t vid, uint16_t pid) {
     if (vid == A760_VID && pid == A760_PID) return 0;
     /* Direct Realtek VID — PID is the firmware PID */
     if (vid == 0x0BDA) {
@@ -131,8 +127,7 @@ static uint16_t resolve_realtek_pid(uint16_t vid, uint16_t pid)
 /* Helpers                                                                   */
 /* ======================================================================== */
 
-static bool parse_vid_pid(const char *device_path, uint16_t &vid, uint16_t &pid)
-{
+static bool parse_vid_pid(const char *device_path, uint16_t &vid, uint16_t &pid) {
     const char *v = strstr(device_path, "vid_");
     if (!v) v = strstr(device_path, "VID_");
     if (!v) return false;
@@ -147,14 +142,13 @@ static bool parse_vid_pid(const char *device_path, uint16_t &vid, uint16_t &pid)
 }
 
 /* Bluetooth class verification via WinUSB (0xE0/0x01/0x01) */
-static bool is_bluetooth_class(const char *device_path)
-{
+static bool is_bluetooth_class(const char *device_path) {
     HANDLE dev = CreateFileA(device_path,
-        GENERIC_WRITE | GENERIC_READ,
-        FILE_SHARE_WRITE | FILE_SHARE_READ,
-        nullptr, OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED,
-        nullptr);
+                             GENERIC_WRITE | GENERIC_READ,
+                             FILE_SHARE_WRITE | FILE_SHARE_READ,
+                             nullptr, OPEN_EXISTING,
+                             FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED,
+                             nullptr);
     if (dev == INVALID_HANDLE_VALUE) return false;
 
     WINUSB_INTERFACE_HANDLE usb_handle = nullptr;
@@ -176,8 +170,7 @@ static bool is_bluetooth_class(const char *device_path)
     return is_bt;
 }
 
-static std::string build_display_name(uint16_t vid, uint16_t pid, uint16_t realtek_pid)
-{
+static std::string build_display_name(uint16_t vid, uint16_t pid, uint16_t realtek_pid) {
     char buf[64];
     if (realtek_pid != 0) {
         const char *chip = BtAdapterEnumerator::realtek_chip_name(realtek_pid);
@@ -196,38 +189,32 @@ static std::string build_display_name(uint16_t vid, uint16_t pid, uint16_t realt
 /* Public API                                                                */
 /* ======================================================================== */
 
-const char *BtAdapterEnumerator::realtek_chip_name(uint16_t pid)
-{
+const char *BtAdapterEnumerator::realtek_chip_name(uint16_t pid) {
     /* First check our curated chip DB (has nice names) */
     auto *info = find_chip_info(pid);
     if (info) return info->chip_name;
     return nullptr;
 }
 
-const char *BtAdapterEnumerator::realtek_fw_name(uint16_t pid)
-{
+const char *BtAdapterEnumerator::realtek_fw_name(uint16_t pid) {
     auto *info = find_chip_info(pid);
     return info ? info->fw_name : nullptr;
 }
 
-const char *BtAdapterEnumerator::realtek_cfg_name(uint16_t pid)
-{
+const char *BtAdapterEnumerator::realtek_cfg_name(uint16_t pid) {
     auto *info = find_chip_info(pid);
     return info ? info->cfg_name : nullptr;
 }
 
-const std::vector<RealtekChipInfo> &BtAdapterEnumerator::get_realtek_chips()
-{
+const std::vector<RealtekChipInfo> &BtAdapterEnumerator::get_realtek_chips() {
     return chip_db();
 }
 
-const OemChipMapping *BtAdapterEnumerator::get_oem_table()
-{
+const OemChipMapping *BtAdapterEnumerator::get_oem_table() {
     return oem_table;
 }
 
-std::vector<FirmwareFileEntry> BtAdapterEnumerator::scan_firmware_files(const std::string &config_dir)
-{
+std::vector<FirmwareFileEntry> BtAdapterEnumerator::scan_firmware_files(const std::string &config_dir) {
     std::vector<FirmwareFileEntry> result;
 
     /* Scan for *_fw.bin files */
@@ -297,8 +284,7 @@ std::vector<FirmwareFileEntry> BtAdapterEnumerator::scan_firmware_files(const st
     return result;
 }
 
-std::vector<BtAdapterInfo> BtAdapterEnumerator::enumerate(bool a760_only)
-{
+std::vector<BtAdapterInfo> BtAdapterEnumerator::enumerate(bool a760_only) {
     std::vector<BtAdapterInfo> result;
 
     HDEVINFO dev_info = SetupDiGetClassDevsA(
@@ -313,8 +299,7 @@ std::vector<BtAdapterInfo> BtAdapterEnumerator::enumerate(bool a760_only)
          SetupDiEnumDeviceInterfaces(dev_info, nullptr,
                                      &GUID_DEVINTERFACE_USB_DEVICE,
                                      idx, &intf_data);
-         idx++)
-    {
+         idx++) {
         DWORD size = 0;
         SetupDiGetDeviceInterfaceDetailA(dev_info, &intf_data, nullptr, 0, &size, nullptr);
         if (size == 0) continue;

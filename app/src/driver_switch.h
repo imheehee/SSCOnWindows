@@ -20,6 +20,6 @@ struct DongleSwitchReport {
     std::string message;
 };
 
-DongleSwitchReport get_dongle_driver_instructions(uint16_t vid, uint16_t pid, bool enable_winusb);
+DongleSwitchReport get_dongle_driver_instructions(uint16_t vid, uint16_t pid, bool enable_winusb, bool korean = false);
 
 #endif

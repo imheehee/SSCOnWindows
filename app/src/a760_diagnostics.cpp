@@ -12,16 +12,19 @@
 
 namespace {
 struct FileCloser {
-    void operator()(void* handle) const { CloseHandle(handle); }
+    void operator()(void *handle) const {
+        CloseHandle(handle);
+    }
 };
 struct WinUsbCloser {
-    void operator()(void* handle) const { WinUsb_Free(handle); }
+    void operator()(void *handle) const {
+        WinUsb_Free(handle);
+    }
 };
 using FileHandle = std::unique_ptr<void, FileCloser>;
 
 bool finish_transfer(BOOL completed, HANDLE device, WINUSB_INTERFACE_HANDLE usb,
-                     OVERLAPPED& io, ULONG& size, DWORD timeout)
-{
+                     OVERLAPPED &io, ULONG &size, DWORD timeout) {
     if (completed) return true;
     if (GetLastError() != ERROR_IO_PENDING) return false;
     if (WaitForSingleObject(io.hEvent, timeout) == WAIT_OBJECT_0)
@@ -33,15 +36,13 @@ bool finish_transfer(BOOL completed, HANDLE device, WINUSB_INTERFACE_HANDLE usb,
     return false;
 }
 
-unsigned le16(const UCHAR* data)
-{
+unsigned le16(const UCHAR *data) {
     return data[0] | (static_cast<unsigned>(data[1]) << 8);
 }
-}
+} // namespace
 
-std::string diagnose_a760(bool korean)
-{
-    const auto tr = [korean](const char* en, const char* ko) { return korean ? ko : en; };
+std::string diagnose_a760(bool korean) {
+    const auto tr = [korean](const char *en, const char *ko) { return korean ? ko : en; };
     const auto status = detect_dongle_driver(A760_VID, A760_PID);
     std::string report = "USB 0BDA:A760";
     if (status.mode == DongleDriverMode::NotPresent)
@@ -59,7 +60,7 @@ std::string diagnose_a760(bool korean)
                            "PnP 감지 결과입니다. 원시 HCI 진단은 이미 WinUSB가 연결된 장치에서만 사용할 수 있습니다.");
 
     std::string path;
-    for (const auto& adapter : BtAdapterEnumerator::enumerate(true)) {
+    for (const auto &adapter : BtAdapterEnumerator::enumerate(true)) {
         if (!path.empty())
             return report + tr("Connect only one A760 for HCI diagnosis.", "HCI 진단에는 A760 한 대만 연결하세요.");
         path = adapter.device_path;
@@ -108,7 +109,8 @@ std::string diagnose_a760(bool korean)
     OVERLAPPED io{};
     io.hEvent = event.get();
     if (!finish_transfer(WinUsb_ControlTransfer(handle, setup, command, sizeof(command), &size, &io),
-                         raw, handle, io, size, 1000) || size != sizeof(command)) {
+                         raw, handle, io, size, 1000) ||
+        size != sizeof(command)) {
         return report + tr("Could not send HCI command 0x1001.", "HCI 명령 0x1001 전송에 실패했습니다.");
     }
 
