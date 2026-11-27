@@ -365,7 +365,7 @@ private:
         uint8_t data[1024];
         uint32_t size = 0;
         uint32_t timestamp = 0;
-        uint8_t frames = 0;
+        bool marker = false;
     };
     static const int MEDIA_QUEUE_CAPACITY = 64;
     MediaPacket media_queue_[MEDIA_QUEUE_CAPACITY];

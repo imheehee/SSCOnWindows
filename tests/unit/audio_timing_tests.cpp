@@ -62,3 +62,11 @@ TEST_CASE("AAC and SBC capabilities are matched on a single audio SEP") {
     CHECK(sbc_mode(sbc, 44100, 1) == 0);
     CHECK(sbc_bitpool(sbc, 53) == 40);
 }
+
+TEST_CASE("A large AAC access unit fits by fragmenting across the media MTU") {
+    using audio_codec_config::aac_fragment_count;
+    CHECK(aac_fragment_count(679, 679) == 1);
+    CHECK(aac_fragment_count(680, 679) == 2);
+    CHECK(aac_fragment_count(0, 679) == 0);
+    CHECK(aac_fragment_count(680, 0) == 0);
+}

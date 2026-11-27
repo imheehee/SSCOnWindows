@@ -1189,38 +1189,36 @@ bool BtStackTransport::send_media(const uint8_t *data, uint32_t size,
     {
         std::lock_guard<std::mutex> lock(send_mutex_);
 
-        /* Drop if queue is full */
-        if (media_queue_count_.load() >= MEDIA_QUEUE_CAPACITY) {
+        if (!streaming_.load()) return false;
+        const auto buffer_size = static_cast<uint32_t>(sizeof(MediaPacket::data));
+        const auto mtu = static_cast<uint32_t>(get_media_mtu());
+        const auto limit = std::min(buffer_size, mtu ? mtu : 679u);
+        const bool aac = codec == AudioCodec::AAC;
+        const bool sbc = codec == AudioCodec::SBC;
+        const auto count = aac ? audio_codec_config::aac_fragment_count(size, limit) : 1u;
+        if (size == 0 || !count ||
+            count > static_cast<uint32_t>(MEDIA_QUEUE_CAPACITY - media_queue_count_.load()) ||
+            (aac && frames != 1) ||
+            (sbc && (frames < 1 || frames > 15)) ||
+            (!aac && size > limit - static_cast<uint32_t>(sbc))) {
             send_failure_count_.fetch_add(1);
             return false;
         }
 
-        MediaPacket &slot = media_queue_[media_queue_head_];
-
-        /* Build the media payload */
-        if (codec == AudioCodec::SBC) {
-            if (size + 1 > sizeof(slot.data)) {
-                send_failure_count_.fetch_add(1);
-                return false;
-            }
-            /* SBC media payload header: 1 byte, frame count in lower 4 bits, no fragmentation */
-            slot.data[0] = frames & 0x0F;
-            memcpy(slot.data + 1, data, size);
-            slot.size = size + 1;
-        } else {
-            /* AAC and SSC: raw payload, no additional header */
-            if (size > sizeof(slot.data)) {
-                send_failure_count_.fetch_add(1);
-                return false;
-            }
-            memcpy(slot.data, data, size);
-            slot.size = size;
+        // A LATM access unit may span multiple RTP packets with the same
+        // timestamp. Reserve space for all fragments before enqueueing any.
+        for (uint32_t fragment = 0; fragment < count; ++fragment) {
+            MediaPacket &slot = media_queue_[media_queue_head_];
+            const auto offset = aac ? fragment * limit : 0u;
+            const auto bytes = std::min(limit, size - offset);
+            if (sbc) slot.data[0] = frames;
+            memcpy(slot.data + static_cast<unsigned>(sbc), data + offset, bytes);
+            slot.size = bytes + static_cast<unsigned>(sbc);
+            slot.timestamp = timestamp;
+            slot.marker = aac && fragment + 1 == count;
+            media_queue_head_ = (media_queue_head_ + 1) % MEDIA_QUEUE_CAPACITY;
         }
-
-        slot.timestamp = timestamp;
-        slot.frames = frames;
-        media_queue_head_ = (media_queue_head_ + 1) % MEDIA_QUEUE_CAPACITY;
-        media_queue_count_.fetch_add(1);
+        media_queue_count_.fetch_add(static_cast<int>(count));
     }
     /* --- send_mutex released --- */
 
@@ -1642,7 +1640,7 @@ void BtStackTransport::handle_a2dp_event(uint8_t *packet, uint16_t size) {
                 int max_payload = a2dp_max_media_payload_size(a2dp_cid_, local_seid_);
                 if (max_payload > 0 && pkt.size <= (uint32_t)max_payload) {
                     uint8_t status = a2dp_source_stream_send_media_payload_rtp(
-                        a2dp_cid_, local_seid_, 0 /* marker */,
+                        a2dp_cid_, local_seid_, static_cast<uint8_t>(pkt.marker),
                         pkt.timestamp,
                         pkt.data, (uint16_t)pkt.size);
                     if (status != ERROR_CODE_SUCCESS) {

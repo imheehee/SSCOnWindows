@@ -29,6 +29,10 @@ inline uint32_t aac_bitrate(const AacCaps &caps, uint32_t wanted) {
     return caps.bitrate ? std::min(wanted, caps.bitrate) : wanted;
 }
 
+inline uint32_t aac_fragment_count(uint32_t bytes, uint32_t payload_limit) {
+    return payload_limit ? bytes / payload_limit + (bytes % payload_limit != 0) : 0;
+}
+
 inline uint8_t sbc_mode(const SbcCaps &caps, uint32_t rate, uint8_t channels) {
     const unsigned frequency = rate == 44100 ? 2 : rate == 48000 ? 1
                                                                  : 0;

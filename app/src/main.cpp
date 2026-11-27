@@ -406,7 +406,7 @@ static void audio_callback(
                 (uint64_t)((e1.QuadPart - e0.QuadPart) * 1000000.0 / (double)cb_freq.QuadPart);
 
             /* Flush if adding this frame would exceed MTU */
-            if (accum_size + out_size > max_raw && accum_frames > 0) {
+            if (accum_frames > 0 && (g_active_codec != AudioCodec::SBC || accum_size + out_size > max_raw || accum_frames + out_frames > 15)) {
                 transport->send_media(
                     accum, accum_size, first_ts,
                     static_cast<uint8_t>(accum_frames), g_active_codec);

@@ -394,7 +394,8 @@ static DWORD WINAPI encode_thread_func(LPVOID) {
 
                 uint16_t mtu = transport->get_media_mtu();
                 if (mtu == 0) mtu = 679;
-                uint32_t max_raw = (g_ctx.active_codec == AudioCodec::SBC) ? (mtu - 1) : mtu;
+                uint32_t max_raw = (g_ctx.active_codec == AudioCodec::SBC) ? (mtu - 1) : g_ctx.active_codec == AudioCodec::AAC ? sizeof(accum)
+                                                                                                                               : mtu;
 
                 uint32_t accum_size = 0;
                 uint32_t accum_frames = 0;
